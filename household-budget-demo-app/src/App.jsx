@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import * as XLSX from "xlsx";
 import {
   Trash2, Plus, TrendingUp, TrendingDown, Wallet, Loader2,
   PiggyBank, Target, ChevronDown, ChevronUp, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut,
@@ -124,13 +123,13 @@ function DatePickerField({ value, onChange, placeholder = "날짜 선택", class
           <div className="absolute left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg p-3 z-40 w-64">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-0.5">
-                <button type="button" onClick={goPrevYear} className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100" title="이전 연도">«</button>
-                <button type="button" onClick={goPrevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100">‹</button>
+                <button type="button" onClick={goPrevYear} className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:bg-slate-200" title="이전 연도">«</button>
+                <button type="button" onClick={goPrevMonth} className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:bg-slate-200">‹</button>
               </div>
               <div className="text-sm font-semibold text-slate-800">{viewYear}년 {viewMonth + 1}월</div>
               <div className="flex items-center gap-0.5">
-                <button type="button" onClick={goNextMonth} className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100">›</button>
-                <button type="button" onClick={goNextYear} className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100" title="다음 연도">»</button>
+                <button type="button" onClick={goNextMonth} className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:bg-slate-200">›</button>
+                <button type="button" onClick={goNextYear} className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:bg-slate-200" title="다음 연도">»</button>
               </div>
             </div>
             <div className="grid grid-cols-7 gap-1 mb-1">
@@ -149,7 +148,7 @@ function DatePickerField({ value, onChange, placeholder = "날짜 선택", class
                     type="button"
                     key={i}
                     onClick={() => selectDay(d)}
-                    className={`h-8 rounded-lg text-sm ${
+                    className={`h-10 rounded-lg text-sm ${
                       isSelected ? "bg-emerald-600 text-white font-semibold"
                         : isToday ? "border border-emerald-400 text-emerald-700"
                         : "text-slate-700 hover:bg-slate-100"
@@ -735,8 +734,13 @@ function HouseholdBudget() {
     return [...base].sort((a, b) => {
       if (sortBy === "amount_desc") return b.amount - a.amount;
       if (sortBy === "amount_asc") return a.amount - b.amount;
-      if (sortBy === "date_asc") return a.date < b.date ? -1 : 1;
-      return a.date < b.date ? 1 : -1;
+      if (a.date !== b.date) {
+        return sortBy === "date_asc" ? (a.date < b.date ? -1 : 1) : (a.date < b.date ? 1 : -1);
+      }
+      // 같은 날짜면 실제로 작성한 시간(id 앞부분에 생성 시각이 들어있어요) 기준으로 정렬해요
+      const timeA = Number(String(a.id).split("-")[0]) || 0;
+      const timeB = Number(String(b.id).split("-")[0]) || 0;
+      return sortBy === "date_asc" ? timeA - timeB : timeB - timeA;
     });
   }, [monthTx, transactions, searchQuery, filterCategory, filterYear, filterMonth, sortBy]);
 
@@ -771,12 +775,19 @@ function HouseholdBudget() {
           .map(([cname, cdata]) => ({
             name: cname,
             total: cdata.total,
-            items: [...cdata.items].sort((a, b) => (a.date < b.date ? -1 : 1)),
+            items: [...cdata.items].sort((a, b) => {
+              if (a.date !== b.date) {
+                return sortBy === "date_asc" ? (a.date < b.date ? -1 : 1) : (a.date < b.date ? 1 : -1);
+              }
+              const timeA = Number(String(a.id).split("-")[0]) || 0;
+              const timeB = Number(String(b.id).split("-")[0]) || 0;
+              return sortBy === "date_asc" ? timeA - timeB : timeB - timeA;
+            }),
           }))
           .sort((a, b) => b.total - a.total),
       }))
       .sort((a, b) => GROUP_DISPLAY_ORDER.indexOf(a.name) - GROUP_DISPLAY_ORDER.indexOf(b.name));
-  }, [displayedTx]);
+  }, [displayedTx, sortBy]);
 
   const totalInterestPaid = useMemo(
     () => transactions
@@ -932,7 +943,8 @@ function HouseholdBudget() {
     return g ? g.label : "기타";
   }
 
-  function exportToExcel(scope) {
+  async function exportToExcel(scope) {
+    const XLSX = await import("xlsx");
     const rows = (scope === "month" ? sortedMonthTx : [...transactions].sort((a, b) => (a.date < b.date ? 1 : -1)))
       .map((t) => ({
         날짜: t.date,
@@ -973,6 +985,7 @@ function HouseholdBudget() {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     try {
+      const XLSX = await import("xlsx");
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
