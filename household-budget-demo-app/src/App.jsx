@@ -60,6 +60,15 @@ function todayStr() {
 function formatWon(n) {
   return Math.round(n).toLocaleString("ko-KR") + "원";
 }
+// 거래 하나의 +/- 표시와 색상을 정해줘요. 지출인데 금액이 마이너스면 +로, 초록색으로 보여줘요.
+function txDisplaySign(t) {
+  const isPositive = t.type === "income" || t.amount < 0;
+  return {
+    sign: isPositive ? "+" : "-",
+    colorClass: isPositive ? "text-emerald-600" : "text-red-500",
+    amountText: formatWon(Math.abs(t.amount)),
+  };
+}
 function formatDateDisplay(dateStr) {
   if (!dateStr) return "";
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -183,7 +192,8 @@ function monthsBetween(fromStr, toStr) {
 }
 
 function ProgressBar({ label, spent, budget }) {
-  const pct = budget > 0 ? Math.min((spent / budget) * 100, 100) : 0;
+  const rawPct = budget > 0 ? (spent / budget) * 100 : 0;
+  const pct = Math.min(rawPct, 100);
   const over = spent > budget;
   return (
     <div className="mb-3 last:mb-0">
@@ -191,6 +201,7 @@ function ProgressBar({ label, spent, budget }) {
         <span className="text-slate-600 font-medium">{label}</span>
         <span className={over ? "text-red-500 font-semibold" : "text-slate-500"}>
           {formatWon(spent)} / {formatWon(budget)}
+          <span className={`ml-1.5 font-semibold ${over ? "text-red-500" : "text-emerald-600"}`}>{rawPct.toFixed(0)}%</span>
         </span>
       </div>
       <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
@@ -289,20 +300,10 @@ function HouseholdBudget() {
   const [newLoanRate, setNewLoanRate] = useState("");
   const [confirmDeleteTxId, setConfirmDeleteTxId] = useState(null);
   const [longPressTx, setLongPressTx] = useState(null);
-  const longPressTimer = useRef(null);
-
-  function handlePressStart(t) {
-    longPressTimer.current = setTimeout(() => {
-      setLongPressTx(t);
-      longPressTimer.current = null;
-    }, 500);
-  }
-  function handlePressEnd() {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  }
+  const [isNegative, setIsNegative] = useState(false);
+  const [emIsNegative, setEmIsNegative] = useState(false);
+  const [budgetEditMode, setBudgetEditMode] = useState(false);
+  const [showBudgetMenu, setShowBudgetMenu] = useState(false);
   const [confirmDeleteLoanId, setConfirmDeleteLoanId] = useState(null);
   const [showCompletedLoans, setShowCompletedLoans] = useState(false);
   const [showLoanMenu, setShowLoanMenu] = useState(false);
@@ -566,7 +567,7 @@ function HouseholdBudget() {
 
   async function addTransaction(e) {
     e.preventDefault();
-    let finalAmount = Number(amount);
+    let finalAmount;
     let finalMemo = memo.trim();
     if (type === "expense" && travelMode) {
       const fa = Number(foreignAmount) || 0;
@@ -574,9 +575,16 @@ function HouseholdBudget() {
       finalAmount = Math.round(fa * rate);
       const fxNote = `${fa.toLocaleString("ko-KR")}${settings.fxCurrency} × ${rate}원`;
       finalMemo = finalMemo ? `${fxNote} · ${finalMemo}` : fxNote;
+    } else {
+      finalAmount = Number(amount) || 0;
+      if (type === "expense" && isNegative) finalAmount = -Math.abs(finalAmount);
     }
-    if (!finalAmount || finalAmount <= 0) {
+    if (isNaN(finalAmount) || finalAmount === 0) {
       setSaveError(travelMode ? "환산된 금액이 0원이에요. 통화·환율·금액을 확인해주세요." : "금액을 입력해주세요.");
+      return;
+    }
+    if (type === "income" && finalAmount < 0) {
+      setSaveError("수입 금액은 0보다 커야 해요.");
       return;
     }
     if (!date) {
@@ -592,6 +600,7 @@ function HouseholdBudget() {
     setMemo("");
     setForeignAmount("");
     setTravelMode(false);
+    setIsNegative(false);
     if (ok) {
       setToast(type === "income" ? "수입이 추가됐어요" : "지출이 추가됐어요");
       setTimeout(() => amountInputRef.current && amountInputRef.current.focus(), 50);
@@ -626,7 +635,8 @@ function HouseholdBudget() {
     setEmType(t.type);
     setEmDate(t.date);
     setEmCategory(t.category);
-    setEmAmount(String(t.amount));
+    setEmAmount(String(Math.abs(t.amount)));
+    setEmIsNegative(t.amount < 0);
     setEmMemo(t.memo || "");
     setEmTravelMode(false);
     setEmForeignAmount("");
@@ -636,7 +646,7 @@ function HouseholdBudget() {
   }
   async function saveEditedTransaction(e) {
     e.preventDefault();
-    let finalAmount = Number(emAmount);
+    let finalAmount;
     let finalMemo = emMemo.trim();
     if (emType === "expense" && emTravelMode) {
       const fa = Number(emForeignAmount) || 0;
@@ -644,8 +654,15 @@ function HouseholdBudget() {
       finalAmount = Math.round(fa * rate);
       const fxNote = `${fa.toLocaleString("ko-KR")}${settings.fxCurrency} × ${rate}원`;
       finalMemo = finalMemo ? `${fxNote} · ${finalMemo}` : fxNote;
+    } else {
+      finalAmount = Number(emAmount) || 0;
+      if (emType === "expense" && emIsNegative) finalAmount = -Math.abs(finalAmount);
     }
-    if (!finalAmount || finalAmount <= 0 || !emDate) return;
+    if (isNaN(finalAmount) || finalAmount === 0 || !emDate) return;
+    if (emType === "income" && finalAmount < 0) {
+      setSaveError("수입 금액은 0보다 커야 해요.");
+      return;
+    }
     const next = transactions.map((t) =>
       t.id === editingId ? { ...t, type: emType, date: emDate, category: emCategory, amount: finalAmount, memo: finalMemo } : t
     );
@@ -1504,8 +1521,21 @@ function HouseholdBudget() {
         ) : (
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
-              <label className="text-xs text-slate-500 block mb-1">금액 (원)</label>
-              <input ref={amountInputRef} type="text" inputMode="numeric" placeholder="0" value={formatNumberInput(amount)}
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs text-slate-500">금액 (원)</label>
+                {type === "expense" && (
+                  <label className="flex items-center gap-1 text-[11px] text-slate-500">
+                    <input type="checkbox" checked={isNegative} onChange={(e) => setIsNegative(e.target.checked)} className="w-3.5 h-3.5 accent-emerald-600" />
+                    마이너스
+                  </label>
+                )}
+              </div>
+              <input
+                ref={amountInputRef}
+                type="text"
+                inputMode="numeric"
+                placeholder="0"
+                value={amount ? (isNegative ? "-" : "") + formatNumberInput(amount) : ""}
                 onChange={(e) => setAmount(parseNumberInput(e.target.value))}
                 className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
             </div>
@@ -1576,7 +1606,35 @@ function HouseholdBudget() {
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
-        <h3 className="text-sm font-semibold text-slate-700 mb-3">이번 달 예산 현황</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-slate-700">이번 달 예산 현황</h3>
+          <div className="relative">
+            <button
+              onClick={() => setShowBudgetMenu((s) => !s)}
+              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
+              aria-label="메뉴"
+            >
+              <MoreVertical size={18} />
+            </button>
+            {showBudgetMenu && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowBudgetMenu(false)} />
+                <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-20 w-36">
+                  <button
+                    onClick={() => {
+                      setBudgetEditMode((m) => !m);
+                      setEditingBudgetGroupId(null);
+                      setShowBudgetMenu(false);
+                    }}
+                    className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    {budgetEditMode ? "예산 수정 닫기" : "예산 수정"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
         {groups.filter((g) => g.budgetEnabled).length === 0 ? (
           <p className="text-sm text-slate-400 text-center py-4">예산이 설정된 그룹이 없어요. 오른쪽 위 ⋯ 메뉴 → 카테고리 관리에서 켜보세요.</p>
         ) : (
@@ -1609,12 +1667,14 @@ function HouseholdBudget() {
                       <button onClick={() => setEditingBudgetGroupId(null)} className="text-xs px-2 py-1 rounded-lg border border-slate-200 text-slate-600">취소</button>
                     </div>
                   ) : (
-                    <button
-                      onClick={() => { setEditingBudgetGroupId(g.id); setBudgetDraft(String(getGroupBudget(g.id, selectedMonth))); }}
-                      className="text-[11px] text-slate-400 hover:text-slate-600"
-                    >
-                      이 달 예산 수정
-                    </button>
+                    budgetEditMode && (
+                      <button
+                        onClick={() => { setEditingBudgetGroupId(g.id); setBudgetDraft(String(getGroupBudget(g.id, selectedMonth))); }}
+                        className="text-[11px] text-slate-400 hover:text-slate-600"
+                      >
+                        이 달 예산 수정
+                      </button>
+                    )
                   )}
                 </div>
                 <ProgressBar label="" spent={spent} budget={getGroupBudget(g.id, selectedMonth)} />
@@ -2295,18 +2355,15 @@ function HouseholdBudget() {
                               {cat.items.map((t) => (
                                 <li
                                   key={t.id}
-                                  onPointerDown={() => handlePressStart(t)}
-                                  onPointerUp={handlePressEnd}
-                                  onPointerLeave={handlePressEnd}
-                                  onContextMenu={(e) => e.preventDefault()}
-                                  className="flex items-center justify-between px-3 py-2 bg-white select-none active:bg-slate-50 transition"
+                                  onClick={() => setLongPressTx(t)}
+                                  className="flex items-center justify-between px-3 py-2 bg-white select-none active:bg-slate-50 transition cursor-pointer"
                                 >
                                   <div className="min-w-0">
                                     <div className="text-sm text-slate-800 truncate">{t.memo || "-"}</div>
                                     <div className="text-xs text-slate-400">{t.date}</div>
                                   </div>
-                                  <span className={`text-sm font-medium shrink-0 ml-2 ${t.type === "income" ? "text-emerald-600" : "text-slate-700"}`}>
-                                    {formatWon(t.amount)}
+                                  <span className={`text-sm font-medium shrink-0 ml-2 ${t.type === "income" ? "text-emerald-600" : (t.amount < 0 ? "text-emerald-600" : "text-slate-700")}`}>
+                                    {t.amount < 0 ? "+" : ""}{formatWon(Math.abs(t.amount))}
                                   </span>
                                 </li>
                               ))}
@@ -2338,11 +2395,8 @@ function HouseholdBudget() {
                   </li>
                 )}
                 <li
-                onPointerDown={() => handlePressStart(t)}
-                onPointerUp={handlePressEnd}
-                onPointerLeave={handlePressEnd}
-                onContextMenu={(e) => e.preventDefault()}
-                className="flex items-center justify-between gap-2 py-2.5 select-none active:bg-slate-50 rounded-lg transition"
+                onClick={() => setLongPressTx(t)}
+                className="flex items-center justify-between gap-2 py-2.5 select-none active:bg-slate-50 rounded-lg transition cursor-pointer"
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <span className="shrink-0 w-[68px] text-center text-[11px] px-1.5 py-1 rounded-full font-medium truncate"
@@ -2357,8 +2411,8 @@ function HouseholdBudget() {
                     <div className="text-xs text-slate-400">{t.date}</div>
                   </div>
                 </div>
-                <span className={`text-sm font-semibold whitespace-nowrap shrink-0 ${t.type === "income" ? "text-emerald-600" : "text-red-500"}`}>
-                  {t.type === "income" ? "+" : "-"}{formatWon(t.amount)}
+                <span className={`text-sm font-semibold whitespace-nowrap shrink-0 ${txDisplaySign(t).colorClass}`}>
+                  {txDisplaySign(t).sign}{txDisplaySign(t).amountText}
                 </span>
               </li>
               </React.Fragment>
@@ -2541,8 +2595,20 @@ function HouseholdBudget() {
               ) : (
                 <div className="grid grid-cols-2 gap-3 mb-3">
                   <div>
-                    <label className="text-xs text-slate-500 block mb-1">금액 (원)</label>
-                    <input type="text" inputMode="numeric" placeholder="0" value={formatNumberInput(emAmount)}
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs text-slate-500">금액 (원)</label>
+                      {emType === "expense" && (
+                        <label className="flex items-center gap-1 text-[11px] text-slate-500">
+                          <input type="checkbox" checked={emIsNegative} onChange={(e) => setEmIsNegative(e.target.checked)} className="w-3.5 h-3.5 accent-emerald-600" />
+                          마이너스
+                        </label>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={emAmount ? (emIsNegative ? "-" : "") + formatNumberInput(emAmount) : ""}
                       onChange={(e) => setEmAmount(parseNumberInput(e.target.value))}
                       className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
                   </div>
