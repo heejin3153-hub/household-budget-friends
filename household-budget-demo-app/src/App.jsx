@@ -1678,6 +1678,17 @@ function HouseholdBudget() {
                   )}
                 </div>
                 <ProgressBar label="" spent={spent} budget={getGroupBudget(g.id, selectedMonth)} />
+                {(() => {
+                  const remain = getGroupBudget(g.id, selectedMonth) - spent;
+                  return (
+                    <div className="flex justify-between items-center mt-1">
+                      <span className="text-[11px] text-slate-400">{remain >= 0 ? "남은 예산" : "초과 금액"}</span>
+                      <span className={`text-xs font-semibold ${remain >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                        {remain >= 0 ? formatWon(remain) : `-${formatWon(Math.abs(remain))}`}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })
