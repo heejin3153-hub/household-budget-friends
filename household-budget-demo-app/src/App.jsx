@@ -1,10 +1,19 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar, ComposedChart } from "recharts";
 import {
   Trash2, Plus, TrendingUp, TrendingDown, Wallet, Loader2,
   PiggyBank, Target, ChevronDown, ChevronUp, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut,
 } from "lucide-react";
 import { storageGet, storageSet, setCurrentUid, signInWithGoogle, signOutUser, watchAuthState, setupOrVerifyPin, checkPinExists } from "./firebase";
+import {
+  DEFAULT_GROUPS, DEFAULT_INCOME_GROUPS, CATEGORY_RENAME_MAP, CURRENCIES, DEFAULT_LOANS,
+} from "./constants";
+import {
+  todayStr, formatWon, formatNumberInput, parseNumberInput, monthsBetween, categoryColor, splitInstallment, txDisplaySign,
+  getCycleLabel, getCycleRange, getDateForCycleDay, formatCycleLabel,
+} from "./utils";
+import DatePickerField from "./components/DatePickerField";
+import ProgressBar from "./components/ProgressBar";
 
 const TX_KEY = "household-budget-transactions";
 const SETTINGS_KEY = "household-budget-settings";
@@ -12,222 +21,163 @@ const LOANS_KEY = "household-budget-loans";
 const RECURRING_KEY = "household-budget-recurring";
 const BUDGETS_KEY = "household-budget-monthly-budgets";
 const CATEGORY_CONFIG_KEY = "household-budget-category-config";
+const ASSETS_KEY = "household-budget-assets";
 
-// 기본 카테고리 그룹 설정값 (사용자가 나중에 화면에서 직접 수정 가능)
-const DEFAULT_GROUPS = [
-  { id: "living", label: "생활비", categories: ["식비", "생활", "문화", "기타"], budgetEnabled: true, budget: 600000 },
-  { id: "allowance", label: "사용자1 용돈", categories: ["(용돈)식비", "(용돈)쇼핑", "(용돈)문화", "(용돈)기타"], budgetEnabled: true, budget: 300000 },
-  { id: "fixed", label: "정기 지출", categories: ["통신", "구독", "교통", "보험", "월세", "공과금", "대출이자", "기타 정기지출"], budgetEnabled: false, budget: 0 },
-  { id: "irregular", label: "비정기 지출", categories: ["세금", "의료", "가족", "여행", "경조사", "예산 외 쇼핑", "기타 비정기지출"], budgetEnabled: false, budget: 0 },
-  { id: "other", label: "기타", categories: ["저축/투자", "대출상환"], budgetEnabled: false, budget: 0 },
-];
-const DEFAULT_INCOME_GROUPS = [
-  { id: "income", label: "수입", categories: ["사용자1", "사용자2", "월세소득"] },
-];
-
-const CATEGORY_COLORS = {
-  "공과금": "#0ea5e9", "월세": "#0284c7",
-  "식비": "#f97316", "생활": "#fb923c", "문화": "#ec4899", "기타": "#94a3b8",
-  "(용돈)쇼핑": "#a855f7", "(용돈)문화": "#d946ef", "(용돈)식비": "#c026d3", "(용돈)기타": "#e879f9",
-  "기타 정기지출": "#7c3aed", "대출이자": "#be123c", "통신": "#0891b2", "구독": "#6366f1", "보험": "#0d9488", "교통": "#2563eb",
-  "세금": "#dc2626", "의료": "#ef4444", "가족": "#f59e0b", "여행": "#06b6d4", "경조사": "#f43f5e", "기타 비정기지출": "#78716c",
-  "예산 외 쇼핑": "#eab308", "저축/투자": "#22c55e", "대출상환": "#16a34a",
-};
-const COLOR_PALETTE = ["#f97316", "#fb923c", "#fbbf24", "#ec4899", "#a855f7", "#d946ef", "#c026d3", "#7c3aed", "#be123c", "#0891b2", "#6366f1", "#0d9488", "#2563eb", "#dc2626", "#ef4444", "#f59e0b", "#06b6d4", "#f43f5e", "#78716c", "#eab308", "#22c55e", "#16a34a", "#0ea5e9", "#0284c7", "#94a3b8"];
-function categoryColor(cat) {
-  if (CATEGORY_COLORS[cat]) return CATEGORY_COLORS[cat];
-  let hash = 0;
-  for (let i = 0; i < (cat || "").length; i++) hash = (hash * 31 + cat.charCodeAt(i)) >>> 0;
-  return COLOR_PALETTE[hash % COLOR_PALETTE.length];
+// 🎯 특정 월의 자산 스냅샷을 가져와요
+// 그 달에 직접 기록한 게 없으면, 그 이전 가장 최근 기록을 이어받아요 (누적 방식)
+// 예: 7월에만 기록했으면, 8월/9월/10월에서 조회할 때 다 7월 값을 보여줌
+function getEffectiveAssetSnapshot(snapshots, month) {
+  // 이 달에 직접 기록한 게 있으면 그걸 쓰고
+  if (snapshots[month]) return snapshots[month];
+  // 없으면 그 이전 달 중 가장 최근 기록을 찾아서 이어받아요
+  const priorMonths = Object.keys(snapshots).filter((m) => m < month).sort();
+  if (priorMonths.length > 0) return snapshots[priorMonths[priorMonths.length - 1]];
+  // 기록이 하나도 없으면 null 반환
+  return null;
 }
 
-const CURRENCIES = [
-  { code: "JPY", label: "일본 엔" },
-  { code: "USD", label: "미국 달러" },
-  { code: "EUR", label: "유로" },
-  { code: "CNY", label: "중국 위안" },
-  { code: "THB", label: "태국 바트" },
-  { code: "VND", label: "베트남 동" },
-  { code: "GBP", label: "영국 파운드" },
-  { code: "AUD", label: "호주 달러" },
-];
-
-const DEFAULT_LOANS = [];
-
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-function formatWon(n) {
-  return Math.round(n).toLocaleString("ko-KR") + "원";
-}
-// 거래 하나의 +/- 표시와 색상을 정해줘요. 지출인데 금액이 마이너스면 +로, 초록색으로 보여줘요.
-function txDisplaySign(t) {
-  const isPositive = t.type === "income" || t.amount < 0;
-  return {
-    sign: isPositive ? "+" : "-",
-    colorClass: isPositive ? "text-emerald-600" : "text-red-500",
-    amountText: formatWon(Math.abs(t.amount)),
-  };
-}
-function formatDateDisplay(dateStr) {
-  if (!dateStr) return "";
-  const [y, m, d] = dateStr.split("-").map(Number);
-  if (!y || !m || !d) return dateStr;
-  return `${y}. ${m}. ${d}.`;
+// 🎯 대출을 만든 월을 추측해요
+// 대출 ID에 생성 시각이 들어있어요 (Date.now() 기반)
+// 이걸로 "지난 달에 이 대출이 실제로 있었는지" 판단하는 데 쓰여요
+// 예: 10월에 대출을 만들면 9월 화면에선 이 대출이 안 보임 (아직 없었으니까)
+function getLoanCreationMonth(loanId) {
+  // ID 첫 부분(생성 시각)을 꺼내요
+  const ts = Number(String(loanId).split("-")[0]);
+  if (!ts || isNaN(ts)) return null;
+  // 타임스탬프를 "2024-10" 형식의 월로 변환
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function DatePickerField({ value, onChange, placeholder = "날짜 선택", className = "" }) {
-  const [open, setOpen] = useState(false);
-  const today = new Date();
-  const parsed = value ? value.split("-").map(Number) : null;
-  const [viewYear, setViewYear] = useState(parsed ? parsed[0] : today.getFullYear());
-  const [viewMonth, setViewMonth] = useState(parsed ? parsed[1] - 1 : today.getMonth());
-
-  useEffect(() => {
-    if (open) {
-      const p = value ? value.split("-").map(Number) : null;
-      const t = new Date();
-      setViewYear(p ? p[0] : t.getFullYear());
-      setViewMonth(p ? p[1] - 1 : t.getMonth());
+function getEffectiveLoanBalances(monthlySnapshots, month, loans) {
+  const snapshots = monthlySnapshots || {};
+  const exact = snapshots[month];
+  const priorMonths = Object.keys(snapshots).filter((m) => m <= month).sort();
+  const source = exact ? month : (priorMonths.length > 0 ? priorMonths[priorMonths.length - 1] : null);
+  const sourceBalances = source ? snapshots[source] : {};
+  const result = {};
+  loans.forEach((l) => {
+    if (source && sourceBalances[l.id] != null) {
+      result[l.id] = sourceBalances[l.id]; // 직접 기록해둔 값이 있으면 항상 이게 우선이에요
+      return;
     }
-  }, [open]);
+    const createdMonth = getLoanCreationMonth(l.id);
+    if (createdMonth && createdMonth > month) return; // 기록이 없고, 아직 생기기 전 달이면 원금도 안 보여줘요
+    result[l.id] = Number(l.originalBalance ?? l.balance) || 0;
+  });
+  return result;
+}
 
-  function pad(n) { return String(n).padStart(2, "0"); }
-  function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
-  function firstWeekday(y, m) { return new Date(y, m, 1).getDay(); }
-
-  function selectDay(d) {
-    onChange(`${viewYear}-${pad(viewMonth + 1)}-${pad(d)}`);
-    setOpen(false);
-  }
-  function goPrevMonth() {
-    if (viewMonth === 0) { setViewMonth(11); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1);
-  }
-  function goNextMonth() {
-    if (viewMonth === 11) { setViewMonth(0); setViewYear(viewYear + 1); } else setViewMonth(viewMonth + 1);
-  }
-  function goPrevYear() { setViewYear(viewYear - 1); }
-  function goNextYear() { setViewYear(viewYear + 1); }
-
-  const dim = daysInMonth(viewYear, viewMonth);
-  const startWeekday = firstWeekday(viewYear, viewMonth);
-  const cells = [];
-  for (let i = 0; i < startWeekday; i++) cells.push(null);
-  for (let d = 1; d <= dim; d++) cells.push(d);
-  const selectedDay = parsed && parsed[0] === viewYear && parsed[1] - 1 === viewMonth ? parsed[2] : null;
-  const todayISO = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-
+function renderDeltaBadge(current, prev) {
+  if (prev == null || prev === 0) return null;
+  const delta = Math.round(((current - prev) / Math.abs(prev)) * 100);
+  if (delta === 0) return <span className="text-slate-300">(-)</span>;
   return (
-    <div className={`relative ${className}`}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={`w-full h-11 flex items-center rounded-lg border border-slate-200 px-3 text-sm bg-white text-left ${value ? "text-slate-800" : "text-slate-400"}`}
-      >
-        {value ? formatDateDisplay(value) : placeholder}
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg p-3 z-40 w-64">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-0.5">
-                <button type="button" onClick={goPrevYear} className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:bg-slate-200" title="이전 연도">«</button>
-                <button type="button" onClick={goPrevMonth} className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:bg-slate-200">‹</button>
-              </div>
-              <div className="text-sm font-semibold text-slate-800">{viewYear}년 {viewMonth + 1}월</div>
-              <div className="flex items-center gap-0.5">
-                <button type="button" onClick={goNextMonth} className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:bg-slate-200">›</button>
-                <button type="button" onClick={goNextYear} className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:bg-slate-200" title="다음 연도">»</button>
-              </div>
-            </div>
-            <div className="grid grid-cols-7 gap-1 mb-1">
-              {["일", "월", "화", "수", "목", "금", "토"].map((d) => (
-                <div key={d} className="text-center text-[11px] text-slate-400">{d}</div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {cells.map((d, i) => {
-                if (d === null) return <div key={i} />;
-                const iso = `${viewYear}-${pad(viewMonth + 1)}-${pad(d)}`;
-                const isSelected = d === selectedDay;
-                const isToday = iso === todayISO;
-                return (
-                  <button
-                    type="button"
-                    key={i}
-                    onClick={() => selectDay(d)}
-                    className={`h-10 rounded-lg text-sm ${
-                      isSelected ? "bg-emerald-600 text-white font-semibold"
-                        : isToday ? "border border-emerald-400 text-emerald-700"
-                        : "text-slate-700 hover:bg-slate-100"
-                    }`}
-                  >
-                    {d}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
+    <span className="text-slate-500 font-medium whitespace-nowrap">
+      {delta > 0 ? `(🔺${delta}%)` : `(🔻${Math.abs(delta)}%)`}
+    </span>
   );
 }
-function formatNumberInput(v) {
-  if (v === "" || v === null || v === undefined) return "";
-  const n = Number(String(v).replace(/,/g, ""));
-  if (isNaN(n)) return "";
-  return n.toLocaleString("ko-KR");
-}
-function parseNumberInput(v) {
-  return v.replace(/[^0-9]/g, "");
-}
-function monthsBetween(fromStr, toStr) {
-  const from = new Date(fromStr);
-  const to = new Date(toStr);
-  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
-  if (to.getDate() < from.getDate()) months -= 1;
-  return Math.max(months, 0);
+
+// 스택 막대 위에 그 달 합계 + 전월대비 증감을 보여주는 라벨 (맨 위 세그먼트에만 붙여요)
+// 금액 크기에 따라 만원/억원 단위를 자동으로 골라서 짧게 표시해요.
+function formatChartAmount(v) {
+  const abs = Math.abs(v);
+  if (abs >= 100000000) {
+    const eok = v / 100000000;
+    const rounded = Math.round(eok * 10) / 10;
+    return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}억`;
+  }
+  if (abs >= 10000) {
+    return `${Math.round(v / 10000)}만`;
+  }
+  return `${Math.round(v).toLocaleString()}원`;
 }
 
-function ProgressBar({ label, spent, budget }) {
-  const rawPct = budget > 0 ? (spent / budget) * 100 : 0;
-  const pct = Math.min(rawPct, 100);
-  const over = spent > budget;
+function makeStackedTotalLabel(dataArr, subCats) {
+  return (props) => {
+    const { x, y, width, index } = props;
+    const row = dataArr[index];
+    const total = subCats.reduce((s, c) => s + (row[c] || 0), 0);
+    const cx = x + width / 2;
+    return (
+      <text x={cx} y={y - 6} textAnchor="middle" fontSize={12} fontWeight={700} fill="#334155">
+        {formatChartAmount(total)}
+      </text>
+    );
+  };
+}
+
+// 막대 위에 금액을 보여주는 라벨 (수입/지출 그룹형 막대용). extraLift로 옆 막대랑 높이를 갈라줘요.
+function makeBarValueLabel(dataArr, key, extraLift = 0) {
+  return (props) => {
+    const { x, y, width, value } = props;
+    if (!value) return null;
+    const cx = x + width / 2;
+    return (
+      <text x={cx} y={y - 5 - extraLift} textAnchor="middle" fontSize={9} fontWeight={700} fill="#334155">
+        {formatChartAmount(value)}
+      </text>
+    );
+  };
+}
+
+// 선그래프 위 점마다 금액을 보여주는 라벨 (순현금흐름/순자산용). 막대 라벨이랑 안 겹치게 점 아래쪽에 배경 있는 텍스트로 표시해요.
+function makeLineValueLabel(color) {
+  return (props) => {
+    const { x, y, value } = props;
+    if (value == null) return null;
+    const text = formatChartAmount(value);
+    const w = text.length * 6.5 + 6;
+    return (
+      <g>
+        <rect x={x - w / 2} y={y + 5} width={w} height={14} rx={3} fill="white" fillOpacity={0.9} />
+        <text x={x} y={y + 15} textAnchor="middle" fontSize={9} fontWeight={700} fill={color || "#0369a1"}>
+          {text}
+        </text>
+      </g>
+    );
+  };
+}
+
+// 도넛 차트 조각마다 바깥쪽에 선으로 이어서 "이름 · 퍼센트" 라벨을 바로 붙여줘요.
+const PIE_LABEL_RADIAN = Math.PI / 180;
+function renderPieSliceLabel(props) {
+  const { cx, cy, midAngle, innerRadius, outerRadius, percent, name, fill } = props;
+  if (percent < 0.03) return null; // 3% 미만은 겹쳐서 안 보이니 생략
+  const lineEndRadius = outerRadius + 10;
+  const labelRadius = outerRadius + 14;
+  const x1 = cx + outerRadius * Math.cos(-midAngle * PIE_LABEL_RADIAN);
+  const y1 = cy + outerRadius * Math.sin(-midAngle * PIE_LABEL_RADIAN);
+  const x2 = cx + lineEndRadius * Math.cos(-midAngle * PIE_LABEL_RADIAN);
+  const y2 = cy + lineEndRadius * Math.sin(-midAngle * PIE_LABEL_RADIAN);
+  const xLabel = cx + labelRadius * Math.cos(-midAngle * PIE_LABEL_RADIAN);
+  const yLabel = cy + labelRadius * Math.sin(-midAngle * PIE_LABEL_RADIAN);
+  const isRight = xLabel >= cx;
   return (
-    <div className="mb-3 last:mb-0">
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-slate-600 font-medium">{label}</span>
-        <span className={over ? "text-red-500 font-semibold" : "text-slate-500"}>
-          {formatWon(spent)} / {formatWon(budget)}
-          <span className={`ml-1.5 font-semibold ${over ? "text-red-500" : "text-emerald-600"}`}>{rawPct.toFixed(0)}%</span>
-        </span>
-      </div>
-      <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${over ? "bg-red-500" : "bg-emerald-500"}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      {over && (
-        <div className="text-[11px] text-red-500 mt-1">
-          예산 {formatWon(spent - budget)} 초과했어요
-        </div>
-      )}
-    </div>
+    <g>
+      <path d={`M${x1},${y1}L${x2},${y2}`} stroke={fill} strokeWidth={1.5} fill="none" />
+      <text x={xLabel} y={yLabel - 6} textAnchor={isRight ? "start" : "end"} dominantBaseline="central" fontSize={11} fontWeight={600} fill="#334155">
+        {name}
+      </text>
+      <text x={xLabel} y={yLabel + 7} textAnchor={isRight ? "start" : "end"} dominantBaseline="central" fontSize={10} fontWeight={500} fill="#94a3b8">
+        {(percent * 100).toFixed(0)}%
+      </text>
+    </g>
   );
 }
 
 function HouseholdBudget() {
   const [transactions, setTransactions] = useState([]);
-  const [settings, setSettings] = useState({ mySalary: 0, spouseGive: 0, title: "우리집 가계부", fxCurrency: "JPY", fxRate: 0, loanModeEnabled: true });
-  const [loanData, setLoanData] = useState({ targetDate: "", loans: DEFAULT_LOANS });
+  const [settings, setSettings] = useState({ mySalary: 0, spouseGive: 0, title: "우리집 가계부", fxCurrency: "JPY", fxRate: 0, loanModeEnabled: true, cycleStartDay: 1 });
+  const [loanData, setLoanData] = useState({ targetDate: "", loans: DEFAULT_LOANS, monthlySnapshots: {} });
   const [recurringItems, setRecurringItems] = useState([]);
   const [monthlyBudgets, setMonthlyBudgets] = useState({});
   const [groups, setGroups] = useState(DEFAULT_GROUPS);
   const [incomeGroups, setIncomeGroups] = useState(DEFAULT_INCOME_GROUPS);
   const [editingBudgetGroupId, setEditingBudgetGroupId] = useState(null);
+  const [budgetEditMode, setBudgetEditMode] = useState(false);
+  const [showBudgetMenu, setShowBudgetMenu] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState("");
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [draftGroups, setDraftGroups] = useState([]);
@@ -235,45 +185,53 @@ function HouseholdBudget() {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [newCatText, setNewCatText] = useState({});
   const [newGroupName, setNewGroupName] = useState("");
+  const [viewportH, setViewportH] = useState(typeof window !== "undefined" ? window.innerHeight : 700);
+  useEffect(() => {
+    function onResize() { setViewportH(window.innerHeight); }
+    window.addEventListener("resize", onResize);
+    onResize();
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const [showRecurring, setShowRecurring] = useState(false);
   const [showAddRecurring, setShowAddRecurring] = useState(false);
   const [newRecurName, setNewRecurName] = useState("");
   const [newRecurCategory, setNewRecurCategory] = useState(DEFAULT_GROUPS.find((g) => g.id === "fixed").categories[0]);
   const [newRecurAmount, setNewRecurAmount] = useState("");
   const [newRecurDay, setNewRecurDay] = useState("1");
-  // 아래 값들은 groups/incomeCategories state로부터 매 렌더마다 계산돼요 (직접 수정 가능한 카테고리 지원용)
-  const LIVING_CATEGORIES = groups.find((g) => g.id === "living")?.categories || [];
-  const ALLOWANCE_CATEGORIES = groups.find((g) => g.id === "allowance")?.categories || [];
-  const FIXED_CATEGORIES = groups.find((g) => g.id === "fixed")?.categories || [];
-  const IRREGULAR_CATEGORIES = groups.find((g) => g.id === "irregular")?.categories || [];
-  const OTHER_EXPENSE_CATEGORIES = groups.find((g) => g.id === "other")?.categories || [];
-  const EXPENSE_GROUPS = groups.map((g) => ({ label: g.label, items: g.categories }));
-  const INCOME_CATEGORIES = incomeGroups.flatMap((g) => g.categories);
   const [confirmDeleteRecurId, setConfirmDeleteRecurId] = useState(null);
   const [showInstallment, setShowInstallment] = useState(false);
   const [instName, setInstName] = useState("");
   const [instTotal, setInstTotal] = useState("");
   const [instMonths, setInstMonths] = useState("");
   const [instStartMonth, setInstStartMonth] = useState(todayStr().slice(0, 7));
-  const [instCategory, setInstCategory] = useState("예산 외 쇼핑");
+  // 할부 카테고리 초기값을 첫 유효 카테고리로 설정
+  const defaultInstCategory = useMemo(() => {
+    const firstCat = groups[0]?.categories[0];
+    return firstCat || "예산 외 쇼핑";
+  }, [groups]);
+  const [instCategory, setInstCategory] = useState(defaultInstCategory);
+  useEffect(() => {
+    setInstCategory(defaultInstCategory);
+  }, [defaultInstCategory]);
   const [loading, setLoading] = useState(true);
   const [saveError, setSaveError] = useState("");
   const [toast, setToast] = useState("");
+  const [toastType, setToastType] = useState("success"); // "success" = 자동 사라짐, "error" = 유지
 
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toastType === "error") return;
     const timer = setTimeout(() => setToast(""), 1800);
     return () => clearTimeout(timer);
-  }, [toast]);
+  }, [toast, toastType]);
   const [lastFailedSave, setLastFailedSave] = useState(null);
 
-  useEffect(() => {
-    if (showCategoryManager) {
-      const prevOverflow = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-      return () => { document.body.style.overflow = prevOverflow; };
-    }
-  }, [showCategoryManager]);
+  // 아래 값들은 groups/incomeCategories state로부터 매 렌더마다 계산돼요 (카테고리 관리에서 직접 수정 가능)
+  const LIVING_CATEGORIES = groups.find((g) => g.id === "living")?.categories || [];
+  const ALLOWANCE_CATEGORIES = groups.find((g) => g.id === "allowance")?.categories || [];
+  const FIXED_CATEGORIES = groups.find((g) => g.id === "fixed")?.categories || [];
+  const OTHER_EXPENSE_CATEGORIES = groups.find((g) => g.id === "other")?.categories || [];
+  const EXPENSE_GROUPS = groups.map((g) => ({ label: g.label, items: g.categories }));
+  const INCOME_CATEGORIES = incomeGroups.flatMap((g) => g.categories);
 
   const [type, setType] = useState("expense");
   const [date, setDate] = useState(todayStr());
@@ -293,6 +251,8 @@ function HouseholdBudget() {
 
   const [selectedMonth, setSelectedMonth] = useState(todayStr().slice(0, 7));
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [showCycleModal, setShowCycleModal] = useState(false);
+  const [cycleDraft, setCycleDraft] = useState(1);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [newLoanName, setNewLoanName] = useState("");
@@ -302,14 +262,20 @@ function HouseholdBudget() {
   const [longPressTx, setLongPressTx] = useState(null);
   const [isNegative, setIsNegative] = useState(false);
   const [emIsNegative, setEmIsNegative] = useState(false);
-  const [budgetEditMode, setBudgetEditMode] = useState(false);
-  const [showBudgetMenu, setShowBudgetMenu] = useState(false);
   const [confirmDeleteLoanId, setConfirmDeleteLoanId] = useState(null);
+  const [confirmCompleteLoanId, setConfirmCompleteLoanId] = useState(null);
   const [showCompletedLoans, setShowCompletedLoans] = useState(false);
   const [showLoanMenu, setShowLoanMenu] = useState(false);
+  const [showAssetInputCard, setShowAssetInputCard] = useState(false);
+  const [showAddAssetForm, setShowAddAssetForm] = useState(false);
+  const [showAddLiabilityForm, setShowAddLiabilityForm] = useState(false);
+  const [assetErrorMsg, setAssetErrorMsg] = useState("");
+  const [liabilityErrorMsg, setLiabilityErrorMsg] = useState("");
+  const [showAssetBar, setShowAssetBar] = useState(true);
+  const [showDebtBar, setShowDebtBar] = useState(true);
+  const [showNetBar, setShowNetBar] = useState(false);
   const [showLoanDetails, setShowLoanDetails] = useState(false);
   const [showTxDetails, setShowTxDetails] = useState(true);
-  const [showTxMenu, setShowTxMenu] = useState(false);
   const [visibleCount, setVisibleCount] = useState(20);
   const [viewMode, setViewMode] = useState("grouped");
   const [expandedCats, setExpandedCats] = useState(new Set());
@@ -326,6 +292,29 @@ function HouseholdBudget() {
   const [filterYear, setFilterYear] = useState(todayStr().slice(0, 4));
   const [filterMonth, setFilterMonth] = useState(todayStr().slice(5, 7));
   const [sortBy, setSortBy] = useState("date_desc");
+  const [page, setPage] = useState("home"); // "home" | "stats"
+  const [statsPeriod, setStatsPeriod] = useState("6"); // "3" | "6" | "12" | "all" | "custom"
+  const [statsFrom, setStatsFrom] = useState("");
+  const [statsTo, setStatsTo] = useState("");
+  const [showIncome, setShowIncome] = useState(true);
+  const [showExpense, setShowExpense] = useState(true);
+  const [showNet, setShowNet] = useState(false);
+  const [statsCategoryGroup, setStatsCategoryGroup] = useState("전체");
+  const [assetData, setAssetData] = useState({ monthlySnapshots: {} });
+  const [newLiabilityName, setNewLiabilityName] = useState("");
+  const [newLiabilityAmount, setNewLiabilityAmount] = useState("");
+  const [confirmDeleteSnapshotMonth, setConfirmDeleteSnapshotMonth] = useState(null);
+  const [newAssetName, setNewAssetName] = useState("");
+  const [newAssetAmount, setNewAssetAmount] = useState("");
+  const [assetViewMonth, setAssetViewMonth] = useState(todayStr().slice(0, 7));
+  const [assetSheetItem, setAssetSheetItem] = useState(null); // { type: 'asset'|'liability', id, name, amount } | null
+  const [assetSheetMode, setAssetSheetMode] = useState("menu"); // 'menu' | 'edit' | 'delete'
+  const [assetSheetNameDraft, setAssetSheetNameDraft] = useState("");
+  const [assetSheetAmountDraft, setAssetSheetAmountDraft] = useState("");
+  const [showAssetHelpModal, setShowAssetHelpModal] = useState(false);
+  const [showRecordedMonths, setShowRecordedMonths] = useState(false);
+  const [reportMonth, setReportMonth] = useState(todayStr().slice(0, 7));
+  const [balanceCardView, setBalanceCardView] = useState("summary"); // "summary" | "detail"
   const [pieGroupFilter, setPieGroupFilter] = useState("생활비");
   useEffect(() => {
     if (pieGroupFilter !== "전체" && !groups.some((g) => g.label === pieGroupFilter)) {
@@ -338,23 +327,47 @@ function HouseholdBudget() {
       try {
         const txRes = await storageGet(TX_KEY);
         if (txRes && txRes.value) {
-          setTransactions(JSON.parse(txRes.value));
+          const loaded = JSON.parse(txRes.value);
+          let changed = false;
+          const migrated = loaded.map((t) => {
+            if (CATEGORY_RENAME_MAP[t.category]) {
+              changed = true;
+              return { ...t, category: CATEGORY_RENAME_MAP[t.category] };
+            }
+            return t;
+          });
+          setTransactions(migrated);
+          if (changed) {
+            try { await storageSet(TX_KEY, migrated); } catch (e) {}
+          }
         }
       } catch (e) {}
       try {
         const sRes = await storageGet(SETTINGS_KEY);
         if (sRes && sRes.value) {
           const loadedSettings = JSON.parse(sRes.value);
+          if (!loadedSettings.cycleStartDay) loadedSettings.cycleStartDay = 1;
           setSettings(loadedSettings);
           if (loadedSettings.defaultPieGroup) setPieGroupFilter(loadedSettings.defaultPieGroup);
+          if (loadedSettings.cycleStartDay > 1) {
+            setSelectedMonth(getCycleLabel(todayStr(), loadedSettings.cycleStartDay));
+            setReportMonth(getCycleLabel(todayStr(), loadedSettings.cycleStartDay));
+          }
         }
       } catch (e) {}
       try {
         const lRes = await storageGet(LOANS_KEY);
         if (lRes && lRes.value) {
-          setLoanData(JSON.parse(lRes.value));
+          const parsed = JSON.parse(lRes.value);
+          if (!parsed.monthlySnapshots) {
+            const month = todayStr().slice(0, 7);
+            const balances = {};
+            (parsed.loans || []).forEach((l) => { balances[l.id] = Number(l.balance) || 0; });
+            parsed.monthlySnapshots = { [month]: balances };
+          }
+          setLoanData(parsed);
         } else {
-          const seeded = { targetDate: "", loans: DEFAULT_LOANS };
+          const seeded = { targetDate: "", loans: DEFAULT_LOANS, monthlySnapshots: {} };
           setLoanData(seeded);
           await storageSet(LOANS_KEY, seeded);
         }
@@ -363,7 +376,18 @@ function HouseholdBudget() {
         const rRes = await storageGet(RECURRING_KEY);
         if (rRes && rRes.value) {
           const loadedR = JSON.parse(rRes.value);
-          setRecurringItems(loadedR.map((r) => ({ day: 1, ...r })));
+          let rChanged = false;
+          const migratedR = loadedR.map((r) => {
+            if (CATEGORY_RENAME_MAP[r.category]) {
+              rChanged = true;
+              return { ...r, category: CATEGORY_RENAME_MAP[r.category] };
+            }
+            return r;
+          });
+          setRecurringItems(migratedR.map((r) => ({ day: 1, ...r })));
+          if (rChanged) {
+            try { await storageSet(RECURRING_KEY, migratedR); } catch (e) {}
+          }
         }
       } catch (e) {}
       try {
@@ -378,7 +402,21 @@ function HouseholdBudget() {
           if (parsed.incomeGroups) {
             setIncomeGroups(parsed.incomeGroups);
           } else if (parsed.incomeCategories) {
+            // 예전 버전(낱개 목록) 데이터를 그룹 구조로 자동 이관
             setIncomeGroups([{ id: "income", label: "수입", categories: parsed.incomeCategories }]);
+          }
+        }
+      } catch (e) {}
+      try {
+        const aRes = await storageGet(ASSETS_KEY);
+        if (aRes && aRes.value) {
+          const parsed = JSON.parse(aRes.value);
+          if (parsed.monthlySnapshots) {
+            setAssetData(parsed);
+          } else if ((parsed.items && parsed.items.length > 0) || (parsed.liabilities && parsed.liabilities.length > 0)) {
+            // 예전(일자 기준) 구조 -> 이번 달 기록으로 이관해요. 예전 히스토리는 새 방식과 안 맞아서 이관 안 해요.
+            // 옮길 내용이 실제로 있을 때만 이관해요 (빈 배열이면 유령 기록만 생기니 건너뛰어요).
+            setAssetData({ monthlySnapshots: { [todayStr().slice(0, 7)]: { items: parsed.items || [], liabilities: parsed.liabilities || [] } } });
           }
         }
       } catch (e) {}
@@ -392,6 +430,8 @@ function HouseholdBudget() {
   const memoInputRef = useRef(null);
   const submitBtnRef = useRef(null);
   const addFormRef = useRef(null);
+  const assetNameInputRef = useRef(null);
+  const liabilityNameInputRef = useRef(null);
   function debouncedSave(key, value, errorMsg, delay = 700) {
     if (debounceTimers.current[key]) clearTimeout(debounceTimers.current[key]);
     debounceTimers.current[key] = setTimeout(async () => {
@@ -427,8 +467,213 @@ function HouseholdBudget() {
     debouncedSave(SETTINGS_KEY, next, "설정 저장에 실패했어요.");
   }
   function persistLoans(next) {
+    const month = todayStr().slice(0, 7);
+    const balances = {};
+    (next.loans || []).forEach((l) => { balances[l.id] = Number(l.balance) || 0; });
+    const nextWithSnapshot = {
+      ...next,
+      monthlySnapshots: { ...(next.monthlySnapshots || loanData.monthlySnapshots || {}), [month]: balances },
+    };
+    setLoanData(nextWithSnapshot);
+    debouncedSave(LOANS_KEY, nextWithSnapshot, "대출 정보 저장에 실패했어요.");
+  }
+  function saveLoanHistoryBalance(loanId, month, balanceValue) {
+    const effectiveNow = getEffectiveLoanBalances(loanData.monthlySnapshots, month, loanData.loans);
+    const monthSnapshot = { ...effectiveNow, [loanId]: Number(balanceValue) || 0 };
+    const nextSnapshots = { ...(loanData.monthlySnapshots || {}), [month]: monthSnapshot };
+    const currentMonth = todayStr().slice(0, 7);
+    const nextLoans = month === currentMonth
+      ? loanData.loans.map((l) => (l.id === loanId ? { ...l, balance: Number(balanceValue) || 0 } : l))
+      : loanData.loans;
+    const next = { ...loanData, loans: nextLoans, monthlySnapshots: nextSnapshots };
     setLoanData(next);
     debouncedSave(LOANS_KEY, next, "대출 정보 저장에 실패했어요.");
+    setToast(`${formatCycleLabel(month, 1)} 대출 잔액을 저장했어요`);
+  }
+  function persistAssetSnapshot(nextItems, nextLiabilities) {
+    const next = {
+      monthlySnapshots: {
+        ...assetData.monthlySnapshots,
+        [assetViewMonth]: { items: nextItems, liabilities: nextLiabilities },
+      },
+    };
+    setAssetData(next);
+    debouncedSave(ASSETS_KEY, next, "자산 정보 저장에 실패했어요.");
+  }
+  function persistAssetItems(nextItems) {
+    persistAssetSnapshot(nextItems, effectiveAssetView.liabilities);
+  }
+  function persistLiabilityItems(nextLiabilities) {
+    persistAssetSnapshot(effectiveAssetView.items, nextLiabilities);
+  }
+  function addAssetItem(e) {
+    e.preventDefault();
+    if (!newAssetName.trim()) return false;
+    const name = newAssetName.trim();
+    const amount = Number(newAssetAmount) || 0;
+
+    // 중복 체크
+    if (effectiveAssetView.items.some((a) => a.name === name)) {
+      setAssetErrorMsg("같은 이름의 자산이 이미 있어요");
+      assetNameInputRef.current?.focus();
+      return false;
+    }
+    setAssetErrorMsg("");
+    
+    const nextSnapshots = { ...(assetData.monthlySnapshots || {}) };
+    nextSnapshots[assetViewMonth] = {
+      items: [...effectiveAssetView.items, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name, amount }],
+      liabilities: effectiveAssetView.liabilities,
+    };
+    // 이 달 이후로 이미 "직접 기록"이 있는 달들엔 이월이 안 되니, 새로 추가한 항목을 거기에도 같이 넣어줘요.
+    let laterCount = 0;
+    Object.keys(assetData.monthlySnapshots || {}).filter((m) => m > assetViewMonth).forEach((m) => {
+      const snap = assetData.monthlySnapshots[m];
+      const alreadyHas = (snap.items || []).some((a) => a.name === name);
+      if (!alreadyHas) {
+        nextSnapshots[m] = {
+          items: [...(snap.items || []), { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name, amount }],
+          liabilities: snap.liabilities || [],
+        };
+        laterCount++;
+      }
+    });
+    const next = { monthlySnapshots: nextSnapshots };
+    setAssetData(next);
+    debouncedSave(ASSETS_KEY, next, "자산 정보 저장에 실패했어요.");
+    setNewAssetName(""); setNewAssetAmount("");
+    setToast(laterCount > 0 ? `추가했어요 (이후 ${laterCount}개월 기록에도 같이 반영)` : "추가했어요");
+    return true;
+  }
+  function countLaterAssetMonths(name) {
+    return Object.keys(assetData.monthlySnapshots || {})
+      .filter((m) => m > assetViewMonth && (assetData.monthlySnapshots[m].items || []).some((a) => a.name === name))
+      .length;
+  }
+  function deleteAssetItem(id) {
+    const item = effectiveAssetView.items.find((a) => a.id === id);
+    const nextSnapshots = { ...(assetData.monthlySnapshots || {}) };
+    nextSnapshots[assetViewMonth] = {
+      items: effectiveAssetView.items.filter((a) => a.id !== id),
+      liabilities: effectiveAssetView.liabilities,
+    };
+    let laterCount = 0;
+    if (item) {
+      Object.keys(assetData.monthlySnapshots || {}).filter((m) => m > assetViewMonth).forEach((m) => {
+        const snap = assetData.monthlySnapshots[m];
+        if ((snap.items || []).some((a) => a.name === item.name)) {
+          nextSnapshots[m] = { items: (snap.items || []).filter((a) => a.name !== item.name), liabilities: snap.liabilities || [] };
+          laterCount++;
+        }
+      });
+    }
+    const next = { monthlySnapshots: nextSnapshots };
+    setAssetData(next);
+    debouncedSave(ASSETS_KEY, next, "자산 정보 저장에 실패했어요.");
+    setToast(laterCount > 0 ? `삭제했어요 (이후 ${laterCount}개월 기록에서도 같이 삭제)` : "삭제했어요");
+  }
+  function addLiabilityItem(e) {
+    e.preventDefault();
+    if (!newLiabilityName.trim()) return false;
+    const name = newLiabilityName.trim();
+    const amount = Number(newLiabilityAmount) || 0;
+
+    // 중복 체크
+    if (effectiveAssetView.liabilities.some((l) => l.name === name)) {
+      setLiabilityErrorMsg("같은 이름의 부채가 이미 있어요");
+      liabilityNameInputRef.current?.focus();
+      return false;
+    }
+    setLiabilityErrorMsg("");
+    
+    const nextSnapshots = { ...(assetData.monthlySnapshots || {}) };
+    nextSnapshots[assetViewMonth] = {
+      items: effectiveAssetView.items,
+      liabilities: [...effectiveAssetView.liabilities, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name, amount }],
+    };
+    let laterCount = 0;
+    Object.keys(assetData.monthlySnapshots || {}).filter((m) => m > assetViewMonth).forEach((m) => {
+      const snap = assetData.monthlySnapshots[m];
+      const alreadyHas = (snap.liabilities || []).some((l) => l.name === name);
+      if (!alreadyHas) {
+        nextSnapshots[m] = {
+          items: snap.items || [],
+          liabilities: [...(snap.liabilities || []), { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name, amount }],
+        };
+        laterCount++;
+      }
+    });
+    const next = { monthlySnapshots: nextSnapshots };
+    setAssetData(next);
+    debouncedSave(ASSETS_KEY, next, "자산 정보 저장에 실패했어요.");
+    setNewLiabilityName(""); setNewLiabilityAmount("");
+    setToast(laterCount > 0 ? `추가했어요 (이후 ${laterCount}개월 기록에도 같이 반영)` : "추가했어요");
+    return true;
+  }
+  function countLaterLiabilityMonths(name) {
+    return Object.keys(assetData.monthlySnapshots || {})
+      .filter((m) => m > assetViewMonth && (assetData.monthlySnapshots[m].liabilities || []).some((l) => l.name === name))
+      .length;
+  }
+  function deleteLiabilityItem(id) {
+    const item = effectiveAssetView.liabilities.find((l) => l.id === id);
+    const nextSnapshots = { ...(assetData.monthlySnapshots || {}) };
+    nextSnapshots[assetViewMonth] = {
+      items: effectiveAssetView.items,
+      liabilities: effectiveAssetView.liabilities.filter((l) => l.id !== id),
+    };
+    let laterCount = 0;
+    if (item) {
+      Object.keys(assetData.monthlySnapshots || {}).filter((m) => m > assetViewMonth).forEach((m) => {
+        const snap = assetData.monthlySnapshots[m];
+        if ((snap.liabilities || []).some((l) => l.name === item.name)) {
+          nextSnapshots[m] = { items: snap.items || [], liabilities: (snap.liabilities || []).filter((l) => l.name !== item.name) };
+          laterCount++;
+        }
+      });
+    }
+    const next = { monthlySnapshots: nextSnapshots };
+    setAssetData(next);
+    debouncedSave(ASSETS_KEY, next, "자산 정보 저장에 실패했어요.");
+    setToast(laterCount > 0 ? `삭제했어요 (이후 ${laterCount}개월 기록에서도 같이 삭제)` : "삭제했어요");
+  }
+  // 자산/부채 목록 행을 탭하면 뜨는 시트: 이름·금액 같이 수정하거나 삭제해요.
+  function openAssetSheet(type, item) {
+    setAssetSheetItem({ type, id: item.id, name: item.name, amount: item.amount });
+    setAssetSheetMode("menu");
+    setAssetSheetNameDraft(item.name);
+    setAssetSheetAmountDraft(String(item.amount));
+  }
+  function saveAssetSheetEdit() {
+    if (!assetSheetItem) return;
+    const { type, id } = assetSheetItem;
+    const amount = Number(assetSheetAmountDraft) || 0;
+    if (type === "loan") {
+      saveLoanHistoryBalance(id, assetViewMonth, amount);
+      setAssetSheetItem(null);
+      return;
+    }
+    const name = assetSheetNameDraft.trim();
+    if (!name) return;
+    if (type === "asset") {
+      persistAssetItems(effectiveAssetView.items.map((a) => (a.id === id ? { ...a, name, amount } : a)));
+    } else {
+      persistLiabilityItems(effectiveAssetView.liabilities.map((l) => (l.id === id ? { ...l, name, amount } : l)));
+    }
+    setAssetSheetItem(null);
+  }
+  function confirmDeleteAssetSheet() {
+    if (!assetSheetItem) return;
+    const { type, id } = assetSheetItem;
+    if (type === "asset") deleteAssetItem(id); else if (type === "liability") deleteLiabilityItem(id);
+    setAssetSheetItem(null);
+  }
+  function deleteSnapshotMonth(month) {
+    const nextSnapshots = { ...assetData.monthlySnapshots };
+    delete nextSnapshots[month];
+    const next = { monthlySnapshots: nextSnapshots };
+    setAssetData(next);
+    debouncedSave(ASSETS_KEY, next, "자산 정보 저장에 실패했어요.");
   }
   function persistRecurring(next) {
     setRecurringItems(next);
@@ -500,6 +745,7 @@ function HouseholdBudget() {
     setDraftGroups(draftGroups.filter((g) => g.id !== groupId));
     setPendingDelete(null);
   }
+  // 수입 쪽도 지출이랑 똑같은 그룹 구조 - 아래 함수들은 위 지출용 함수랑 대응돼요
   function renameIncomeGroupLabel(groupId, newLabel) {
     setDraftIncomeGroups(draftIncomeGroups.map((g) => (g.id === groupId ? { ...g, label: newLabel } : g)));
   }
@@ -671,7 +917,7 @@ function HouseholdBudget() {
     if (ok) setToast("수정됐어요");
   }
 
-  const monthTx = useMemo(() => transactions.filter((t) => t.date.slice(0, 7) === selectedMonth), [transactions, selectedMonth]);
+  const monthTx = useMemo(() => transactions.filter((t) => getCycleLabel(t.date, settings.cycleStartDay) === selectedMonth), [transactions, selectedMonth, settings.cycleStartDay]);
   const totalIncome = useMemo(() => monthTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0), [monthTx]);
   const totalExpense = useMemo(() => monthTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0), [monthTx]);
   const balance = totalIncome - totalExpense;
@@ -685,16 +931,6 @@ function HouseholdBudget() {
     });
     return warnings;
   }, [monthTx, groups, monthlyBudgets, selectedMonth]);
-  const irregularTx = useMemo(
-    () => monthTx.filter((t) => t.type === "expense" && IRREGULAR_CATEGORIES.includes(t.category)),
-    [monthTx]
-  );
-  const irregularSpent = useMemo(() => irregularTx.reduce((s, t) => s + t.amount, 0), [irregularTx]);
-  const irregularByCategory = useMemo(() => {
-    const map = {};
-    irregularTx.forEach((t) => { map[t.category] = (map[t.category] || 0) + t.amount; });
-    return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [irregularTx]);
 
   const categoryData = useMemo(() => {
     const map = {};
@@ -708,6 +944,212 @@ function HouseholdBudget() {
     return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   }, [monthTx, pieGroupFilter]);
 
+  function filterMonthsByPeriod(monthsList, period, from, to) {
+    if (period === "custom") {
+      if (!from || !to) return monthsList.slice(-6);
+      const fromLabel = from.slice(0, 7), toLabel = to.slice(0, 7);
+      return monthsList.filter((m) => m.month >= fromLabel && m.month <= toLabel);
+    }
+    if (period === "all") return monthsList;
+    return monthsList.slice(-Number(period));
+  }
+
+  const monthlyTrend = useMemo(() => {
+    const map = {};
+    transactions.forEach((t) => {
+      const label = getCycleLabel(t.date, settings.cycleStartDay);
+      if (!map[label]) map[label] = { month: label, income: 0, expense: 0 };
+      if (t.type === "income") map[label].income += t.amount;
+      else map[label].expense += t.amount;
+    });
+    const sorted = Object.values(map).sort((a, b) => a.month.localeCompare(b.month));
+    return filterMonthsByPeriod(sorted, statsPeriod, statsFrom, statsTo)
+      .map((m) => ({ ...m, net: m.income - m.expense, label: `${Number(m.month.slice(5))}월` }));
+  }, [transactions, statsPeriod, statsFrom, statsTo, settings.cycleStartDay]);
+
+  const categoryTrendStacked = useMemo(() => {
+    if (statsCategoryGroup === "전체") return { data: [], subCats: [] };
+    const group = EXPENSE_GROUPS.find((g) => g.label === statsCategoryGroup);
+    if (!group) return { data: [], subCats: [] };
+    const monthMap = {};
+    const subCatsSet = new Set();
+    transactions.filter((t) => t.type === "expense" && group.items.includes(t.category)).forEach((t) => {
+      const label = getCycleLabel(t.date, settings.cycleStartDay);
+      if (!monthMap[label]) monthMap[label] = {};
+      monthMap[label][t.category] = (monthMap[label][t.category] || 0) + t.amount;
+      subCatsSet.add(t.category);
+    });
+    const sortedMonths = Object.keys(monthMap).sort();
+    const filteredMonths = filterMonthsByPeriod(sortedMonths.map((month) => ({ month })), statsPeriod, statsFrom, statsTo).map((m) => m.month);
+    const subCats = Array.from(subCatsSet);
+    const data = filteredMonths.map((month) => {
+      const row = { month, label: `${Number(month.slice(5))}월` };
+      subCats.forEach((c) => { row[c] = monthMap[month][c] || 0; });
+      return row;
+    });
+    return { data, subCats };
+  }, [transactions, statsCategoryGroup, statsPeriod, statsFrom, statsTo, settings.cycleStartDay]);
+
+  const effectiveAssetView = useMemo(() => {
+    const snapshots = assetData.monthlySnapshots || {};
+    const isRecorded = !!snapshots[assetViewMonth];
+    const snap = getEffectiveAssetSnapshot(snapshots, assetViewMonth);
+    const priorMonths = Object.keys(snapshots).filter((m) => m < assetViewMonth).sort();
+    return {
+      items: snap ? snap.items || [] : [],
+      liabilities: snap ? snap.liabilities || [] : [],
+      isRecorded,
+      sourceMonth: isRecorded ? assetViewMonth : (priorMonths.length > 0 ? priorMonths[priorMonths.length - 1] : null),
+    };
+  }, [assetData.monthlySnapshots, assetViewMonth]);
+
+  const assetViewLoanBalances = useMemo(() => {
+    return getEffectiveLoanBalances(loanData.monthlySnapshots, assetViewMonth, loanData.loans);
+  }, [loanData.monthlySnapshots, loanData.loans, assetViewMonth]);
+
+  const assetMonthOptions = useMemo(() => {
+    const opts = [];
+    const now = new Date();
+    for (let offset = -60; offset <= 12; offset++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      opts.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    }
+    Object.keys(assetData.monthlySnapshots || {}).forEach((m) => { if (!opts.includes(m)) opts.push(m); });
+    return opts.sort().reverse();
+  }, [assetData.monthlySnapshots]);
+
+  const assetTotals = useMemo(() => {
+    const totalAssets = effectiveAssetView.items.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+    const loanBalances = getEffectiveLoanBalances(loanData.monthlySnapshots, assetViewMonth, loanData.loans);
+    const loanDebt = Object.values(loanBalances).reduce((s, v) => s + (Number(v) || 0), 0);
+    const liabilityDebt = effectiveAssetView.liabilities.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    const totalDebt = loanDebt + liabilityDebt;
+    return { totalAssets, totalDebt, netWorth: totalAssets - totalDebt };
+  }, [effectiveAssetView, loanData.loans, loanData.monthlySnapshots, assetViewMonth]);
+
+  const isDuplicateAssetName = newAssetName.trim() !== "" && effectiveAssetView.items.some((a) => a.name === newAssetName.trim());
+  const isDuplicateLiabilityName = newLiabilityName.trim() !== "" && effectiveAssetView.liabilities.some((l) => l.name === newLiabilityName.trim());
+
+  const assetHistoryFiltered = useMemo(() => {
+    const snapshots = assetData.monthlySnapshots || {};
+    const loanSnapshots = loanData.monthlySnapshots || {};
+    const recordedMonths = Array.from(new Set([...Object.keys(snapshots), ...Object.keys(loanSnapshots)])).sort();
+    if (recordedMonths.length === 0) return [];
+    const earliestMonth = recordedMonths[0];
+    const currentMonth = todayStr().slice(0, 7);
+    const allMonths = [];
+    let [y, m] = earliestMonth.split("-").map(Number);
+    const [cy, cm] = currentMonth.split("-").map(Number);
+    while (y < cy || (y === cy && m <= cm)) {
+      allMonths.push(`${y}-${String(m).padStart(2, "0")}`);
+      m += 1;
+      if (m > 12) { m = 1; y += 1; }
+    }
+    const filteredMonths = filterMonthsByPeriod(allMonths.map((month) => ({ month })), statsPeriod, statsFrom, statsTo).map((x) => x.month);
+    return filteredMonths.map((month) => {
+      const snap = getEffectiveAssetSnapshot(snapshots, month);
+      const items = snap ? snap.items || [] : [];
+      const liabilities = snap ? snap.liabilities || [] : [];
+      const totalAssets = items.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+      const loanBalances = getEffectiveLoanBalances(loanData.monthlySnapshots, month, loanData.loans);
+      const loanDebt = Object.values(loanBalances).reduce((s, v) => s + (Number(v) || 0), 0);
+      const liabilityDebt = liabilities.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+      const totalDebt = loanDebt + liabilityDebt;
+      return { month, label: `${Number(month.slice(5))}월`, netWorth: totalAssets - totalDebt, totalAssets, totalDebt };
+    });
+  }, [assetData.monthlySnapshots, statsPeriod, statsFrom, statsTo, loanData.loans, loanData.monthlySnapshots]);
+
+  const cashFlowStatement = useMemo(() => {
+    const mTx = transactions.filter((t) => getCycleLabel(t.date, settings.cycleStartDay) === selectedMonth);
+    const incomeMap = {};
+    const fixedMap = {}, assetMap = {};
+    const variableGroupMap = {};
+    const fixedGroup = groups.find((g) => g.id === "fixed");
+    const fixedCats = fixedGroup ? fixedGroup.categories : [];
+    mTx.forEach((t) => {
+      if (t.type === "income") {
+        incomeMap[t.category] = (incomeMap[t.category] || 0) + t.amount;
+      } else if (t.category === "저축/투자" || t.category === "대출상환") {
+        assetMap[t.category] = (assetMap[t.category] || 0) + t.amount;
+      } else if (fixedCats.includes(t.category)) {
+        fixedMap[t.category] = (fixedMap[t.category] || 0) + t.amount;
+      } else {
+        const label = groupLabel(t.category);
+        if (!variableGroupMap[label]) variableGroupMap[label] = {};
+        variableGroupMap[label][t.category] = (variableGroupMap[label][t.category] || 0) + t.amount;
+      }
+    });
+    const toItems = (map) => Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+    const incomeItems = toItems(incomeMap);
+    const fixedItems = toItems(fixedMap);
+    const assetItems = toItems(assetMap);
+    const variableGroups = Object.entries(variableGroupMap)
+      .map(([label, catMap]) => ({ label, items: toItems(catMap), total: Object.values(catMap).reduce((s, v) => s + v, 0) }))
+      .sort((a, b) => b.total - a.total);
+    const totalIncome = incomeItems.reduce((s, i) => s + i.value, 0);
+    const totalFixed = fixedItems.reduce((s, i) => s + i.value, 0);
+    const totalAsset = assetItems.reduce((s, i) => s + i.value, 0);
+    const totalVariable = variableGroups.reduce((s, g) => s + g.total, 0);
+    return {
+      incomeItems, fixedItems, assetItems, variableGroups,
+      totalIncome, totalFixed, totalAsset, totalVariable,
+      totalExpense: totalFixed + totalAsset + totalVariable,
+      net: totalIncome - totalFixed - totalAsset - totalVariable,
+      variableLimit: totalIncome - totalFixed - totalAsset,
+    };
+  }, [transactions, selectedMonth, groups, settings.cycleStartDay]);
+
+
+  const balanceSheetSnapshot = useMemo(() => {
+    const snapshots = assetData.monthlySnapshots || {};
+    const snap = getEffectiveAssetSnapshot(snapshots, reportMonth);
+    if (!snap && loanData.loans.length === 0) return null;
+    const items = snap ? snap.items || [] : [];
+    const liabilities = snap ? snap.liabilities || [] : [];
+    const totalAssets = items.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+
+    const loanBalances = getEffectiveLoanBalances(loanData.monthlySnapshots, reportMonth, loanData.loans);
+    const [py, pm] = reportMonth.split("-").map(Number);
+    let prevY = py, prevM = pm - 1;
+    if (prevM < 1) { prevM = 12; prevY -= 1; }
+    const prevMonth = `${prevY}-${String(prevM).padStart(2, "0")}`;
+    const prevLoanBalances = getEffectiveLoanBalances(loanData.monthlySnapshots, prevMonth, loanData.loans);
+    const loanDetail = loanData.loans
+      .map((l) => ({
+        id: l.id,
+        name: l.name,
+        balance: loanBalances[l.id] || 0,
+        paidThisMonth: (prevLoanBalances[l.id] || 0) - (loanBalances[l.id] || 0),
+      }))
+      .filter((l) => l.balance > 0 || l.paidThisMonth !== 0);
+    const loanDebt = loanDetail.reduce((s, l) => s + l.balance, 0);
+
+    const liabilityDebt = liabilities.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    const totalDebt = loanDebt + liabilityDebt;
+    const netWorth = totalAssets - totalDebt;
+
+    // 전월대비 순자산 변동 + 가장 크게 움직인 항목 하나
+    const prevSnap = getEffectiveAssetSnapshot(snapshots, prevMonth);
+    const prevItems = prevSnap ? prevSnap.items || [] : [];
+    const prevLiabilities = prevSnap ? prevSnap.liabilities || [] : [];
+    const prevTotalAssets = prevItems.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+    const prevLiabilityDebt = prevLiabilities.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    const prevLoanDebt = Object.values(prevLoanBalances).reduce((s, v) => s + (Number(v) || 0), 0);
+    const prevNetWorth = prevTotalAssets - (prevLoanDebt + prevLiabilityDebt);
+    const netWorthChange = (prevSnap || loanDetail.some((l) => l.paidThisMonth !== 0)) ? netWorth - prevNetWorth : null;
+
+    const totalAssetsChange = totalAssets - prevTotalAssets;
+    const totalDebtChange = totalDebt - (prevLoanDebt + prevLiabilityDebt);
+    let changeNote = null;
+    if (totalDebtChange !== 0) {
+      changeNote = `부채 ${formatWon(Math.abs(totalDebtChange))} ${totalDebtChange < 0 ? "감소" : "증가"}`;
+    } else if (totalAssetsChange !== 0) {
+      changeNote = `자산 ${formatWon(Math.abs(totalAssetsChange))} ${totalAssetsChange > 0 ? "증가" : "감소"}`;
+    }
+
+    return { month: reportMonth, totalAssets, totalDebt, netWorth, items, liabilities, loanDetail, netWorthChange, changeNote };
+  }, [assetData.monthlySnapshots, reportMonth, loanData.loans, loanData.monthlySnapshots]);
+
   const topGroupTransactions = useMemo(() => {
     let base = monthTx.filter((t) => t.type === "expense");
     if (pieGroupFilter !== "전체") {
@@ -718,10 +1160,10 @@ function HouseholdBudget() {
   }, [monthTx, pieGroupFilter]);
 
   const monthOptions = useMemo(() => {
-    const set = new Set(transactions.map((t) => t.date.slice(0, 7)));
+    const set = new Set(transactions.map((t) => getCycleLabel(t.date, settings.cycleStartDay)));
     set.add(selectedMonth);
     return Array.from(set).sort().reverse();
-  }, [transactions, selectedMonth]);
+  }, [transactions, selectedMonth, settings.cycleStartDay]);
 
   const sortedMonthTx = useMemo(() => [...monthTx].sort((a, b) => (a.date < b.date ? 1 : -1)), [monthTx]);
 
@@ -792,19 +1234,12 @@ function HouseholdBudget() {
           .map(([cname, cdata]) => ({
             name: cname,
             total: cdata.total,
-            items: [...cdata.items].sort((a, b) => {
-              if (a.date !== b.date) {
-                return sortBy === "date_asc" ? (a.date < b.date ? -1 : 1) : (a.date < b.date ? 1 : -1);
-              }
-              const timeA = Number(String(a.id).split("-")[0]) || 0;
-              const timeB = Number(String(b.id).split("-")[0]) || 0;
-              return sortBy === "date_asc" ? timeA - timeB : timeB - timeA;
-            }),
+            items: [...cdata.items].sort((a, b) => (a.date < b.date ? -1 : 1)),
           }))
           .sort((a, b) => b.total - a.total),
       }))
       .sort((a, b) => GROUP_DISPLAY_ORDER.indexOf(a.name) - GROUP_DISPLAY_ORDER.indexOf(b.name));
-  }, [displayedTx, sortBy]);
+  }, [displayedTx]);
 
   const totalInterestPaid = useMemo(
     () => transactions
@@ -852,6 +1287,13 @@ function HouseholdBudget() {
     };
     await persistLoans(next);
   }
+  async function updateLoanName(id, newName) {
+    const next = {
+      ...loanData,
+      loans: loanData.loans.map((l) => (l.id === id ? { ...l, name: newName } : l)),
+    };
+    await persistLoans(next);
+  }
   async function updateLoanOriginal(id, newOriginal) {
     const next = {
       ...loanData,
@@ -868,7 +1310,10 @@ function HouseholdBudget() {
       loans: loanData.loans.map((l) => {
         if (l.id !== id) return l;
         const nowCompleted = !l.completed;
-        return { ...l, completed: nowCompleted, balance: nowCompleted ? 0 : l.balance };
+        if (nowCompleted) {
+          return { ...l, completed: true, preCompleteBalance: l.balance, balance: 0 };
+        }
+        return { ...l, completed: false, balance: l.preCompleteBalance ?? l.balance };
       }),
     };
     await persistLoans(next);
@@ -907,25 +1352,19 @@ function HouseholdBudget() {
     const total = Number(instTotal);
     const months = Number(instMonths);
     if (!instName.trim() || !total || total <= 0 || !months || months <= 0) return;
-    const monthly = Math.floor(total / months);
-    const remainder = total - monthly * months;
     const [startY, startM] = instStartMonth.split("-").map(Number);
-    const newTxs = [];
-    for (let i = 0; i < months; i++) {
-      let y = startY, m = startM + i;
-      while (m > 12) { m -= 12; y += 1; }
-      const isLast = i === months - 1;
-      newTxs.push({
-        id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
-        type: "expense",
-        date: `${y}-${String(m).padStart(2, "0")}-01`,
-        category: instCategory,
-        amount: isLast ? monthly + remainder : monthly,
-        memo: `${instName.trim()} (${i + 1}/${months})`,
-      });
-    }
+    const items = splitInstallment({ total, months, startYear: startY, startMonth: startM, name: instName.trim() });
+    const newTxs = items.map((it, i) => ({
+      id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+      type: "expense",
+      category: instCategory,
+      ...it,
+    }));
     const ok = await persistTx([...newTxs, ...transactions]);
-    if (ok) setToast(`${months}개월치 할부를 등록했어요`);
+    if (ok) {
+      const monthlyAmount = Math.floor(total / months);
+      setToast(`${instName.trim()}: 총액 ${formatWon(total)}, 매달 ${formatWon(monthlyAmount)}씩 ${months}개월로 등록했어요`);
+    }
     setInstName(""); setInstTotal(""); setInstMonths("");
     setShowInstallment(false);
   }
@@ -942,13 +1381,14 @@ function HouseholdBudget() {
       const ok = await persistTx(transactions.filter((t) => t.id !== existing.id));
       if (ok) setToast(`${item.name} 기록을 취소했어요`);
     } else {
-      const day = String(Math.min(Math.max(Number(item.day) || 1, 1), 28)).padStart(2, "0");
+      const day = Math.min(Math.max(Number(item.day) || 1, 1), 28);
+      const date = getDateForCycleDay(selectedMonth, day, settings.cycleStartDay);
       const newTx = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        type: "expense", date: `${selectedMonth}-${day}`, category: item.category, amount: Number(item.amount) || 0, memo: item.name,
+        type: "expense", date, category: item.category, amount: Number(item.amount) || 0, memo: item.name,
       };
       const ok = await persistTx([newTx, ...transactions]);
-      if (ok) setToast(`${item.name} → ${selectedMonth}월 ${Number(day)}일로 기록했어요 ✅`);
+      if (ok) setToast(`${item.name} → ${date} 로 기록했어요 ✅`);
     }
   }
   async function updateTargetDate(d) {
@@ -988,6 +1428,85 @@ function HouseholdBudget() {
       XLSX.utils.book_append_sheet(wb, recurWs, "정기지출 체크리스트");
     }
 
+    if (scope === "all") {
+      // 대출
+      if (loanData.loans.length > 0) {
+        const loanRows = loanData.loans.map((l) => ({
+          이름: l.name,
+          최초금액: l.originalBalance || 0,
+          현재잔액: l.balance || 0,
+          이자율: l.rate || 0,
+          상환완료: l.completed ? "Y" : "N",
+        }));
+        const loanWs = XLSX.utils.json_to_sheet(loanRows);
+        loanWs["!cols"] = [{ wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 8 }];
+        XLSX.utils.book_append_sheet(wb, loanWs, "대출");
+      }
+
+      // 대출 월별 기록
+      const loanHistRows = [];
+      Object.entries(loanData.monthlySnapshots || {}).sort().forEach(([month, balances]) => {
+        Object.entries(balances).forEach(([loanId, balance]) => {
+          const loan = loanData.loans.find((l) => l.id === loanId);
+          if (loan) loanHistRows.push({ 월: month, 대출이름: loan.name, 잔액: balance });
+        });
+      });
+      if (loanHistRows.length > 0) {
+        const loanHistWs = XLSX.utils.json_to_sheet(loanHistRows);
+        loanHistWs["!cols"] = [{ wch: 10 }, { wch: 20 }, { wch: 12 }];
+        XLSX.utils.book_append_sheet(wb, loanHistWs, "대출월별기록");
+      }
+
+      // 자산 (월별)
+      const assetRows = [];
+      Object.entries(assetData.monthlySnapshots || {}).sort().forEach(([month, snap]) => {
+        (snap.items || []).forEach((a) => assetRows.push({ 월: month, 자산이름: a.name, 금액: a.amount }));
+      });
+      if (assetRows.length > 0) {
+        const assetWs = XLSX.utils.json_to_sheet(assetRows);
+        assetWs["!cols"] = [{ wch: 10 }, { wch: 20 }, { wch: 14 }];
+        XLSX.utils.book_append_sheet(wb, assetWs, "자산");
+      }
+
+      // 부채 (대출 외, 월별)
+      const liabilityRows = [];
+      Object.entries(assetData.monthlySnapshots || {}).sort().forEach(([month, snap]) => {
+        (snap.liabilities || []).forEach((l) => liabilityRows.push({ 월: month, 부채이름: l.name, 금액: l.amount }));
+      });
+      if (liabilityRows.length > 0) {
+        const liabWs = XLSX.utils.json_to_sheet(liabilityRows);
+        liabWs["!cols"] = [{ wch: 10 }, { wch: 20 }, { wch: 14 }];
+        XLSX.utils.book_append_sheet(wb, liabWs, "부채");
+      }
+
+      // 예산 (월별 그룹 예산)
+      const budgetRows = [];
+      Object.entries(monthlyBudgets || {}).sort().forEach(([month, byGroup]) => {
+        Object.entries(byGroup).forEach(([groupId, amount]) => {
+          const group = groups.find((g) => g.id === groupId);
+          budgetRows.push({ 월: month, 그룹: group ? group.label : groupId, 예산금액: amount });
+        });
+      });
+      if (budgetRows.length > 0) {
+        const budgetWs = XLSX.utils.json_to_sheet(budgetRows);
+        budgetWs["!cols"] = [{ wch: 10 }, { wch: 14 }, { wch: 12 }];
+        XLSX.utils.book_append_sheet(wb, budgetWs, "예산");
+      }
+
+      // 기본 설정
+      const settingsRows = [
+        { 항목: "정산시작일", 값: settings.cycleStartDay || 1 },
+        { 항목: "가계부이름", 값: settings.title || "" },
+        { 항목: "대출상환모드", 값: settings.loanModeEnabled === false ? "OFF" : "ON" },
+        { 항목: "환율통화", 값: settings.fxCurrency || "" },
+        { 항목: "환율값", 값: settings.fxRate || 0 },
+        { 항목: "대출목표일", 값: loanData.targetDate || "" },
+      ];
+      const settingsWs = XLSX.utils.json_to_sheet(settingsRows);
+      settingsWs["!cols"] = [{ wch: 14 }, { wch: 20 }];
+      XLSX.utils.book_append_sheet(wb, settingsWs, "설정");
+    }
+
     const filename = scope === "month"
       ? `가계부_${selectedMonth}.xlsx`
       : `가계부_전체.xlsx`;
@@ -995,7 +1514,18 @@ function HouseholdBudget() {
   }
 
   function resolveImportedCategory(rawCategory, rawGroup) {
-    return rawCategory || rawCategory;
+    if (!rawCategory) return rawCategory;
+    // 이미 예전 이름이면 우선 새 이름으로 변환
+    let cat = CATEGORY_RENAME_MAP[rawCategory] || rawCategory;
+    // "식비/문화/기타"처럼 그룹마다 겹치는 이름은 그때 내보낸 "분류" 칸으로 원래 그룹을 되짚어서 교정
+    const AMBIGUOUS = ["식비", "문화", "기타"];
+    if (AMBIGUOUS.includes(cat) && rawGroup) {
+      if (rawGroup.includes("용돈")) return `(용돈)${cat}`;
+      if (rawGroup.includes("비정기")) return cat === "기타" ? "기타 비정기지출" : cat;
+      if (rawGroup.includes("정기")) return cat === "기타" ? "기타 정기지출" : cat;
+      if (rawGroup.includes("생활비")) return cat; // 식비/문화/기타는 생활비 쪽엔 접두어 없이 그대로
+    }
+    return cat;
   }
 
   async function handleImportExcel(e) {
@@ -1030,20 +1560,14 @@ function HouseholdBudget() {
         })
         .filter((t) => t.date && t.category && t.amount > 0);
 
-      if (imported.length === 0) {
-        setSaveError("엑셀에서 읽을 수 있는 거래가 없어요. 이전에 이 앱에서 내보낸 파일인지 확인해주세요.");
-        return;
-      }
-
       const existingKeys = new Set(transactions.map((t) => `${t.date}|${t.type}|${t.category}|${t.amount}|${t.memo}`));
       const newOnes = imported.filter((t) => !existingKeys.has(`${t.date}|${t.type}|${t.category}|${t.amount}|${t.memo}`));
 
-      // 정기지출 체크리스트 시트도 있으면 같이 불러오기
+      // 정기지출 체크리스트
       let recurAddedCount = 0;
       const recurSheetName = wb.SheetNames.find((n) => n === "정기지출 체크리스트");
       if (recurSheetName) {
-        const recurWs = wb.Sheets[recurSheetName];
-        const recurRows = XLSX.utils.sheet_to_json(recurWs, { defval: "" });
+        const recurRows = XLSX.utils.sheet_to_json(wb.Sheets[recurSheetName], { defval: "" });
         const existingRecurKeys = new Set(recurringItems.map((r) => `${r.name}|${r.category}`));
         const newRecurItems = recurRows
           .map((r) => ({
@@ -1060,18 +1584,154 @@ function HouseholdBudget() {
         }
       }
 
-      if (newOnes.length === 0) {
-        setToast(recurAddedCount > 0 ? `정기지출 ${recurAddedCount}건 불러왔어요` : "이미 다 들어있는 내역이에요");
+      // 대출 + 대출월별기록 (같이 처리해야 이름→id 매칭이 가능해요)
+      let loanAddedCount = 0;
+      let loanHistAddedCount = 0;
+      const loanSheetName = wb.SheetNames.find((n) => n === "대출");
+      const loanHistSheetName = wb.SheetNames.find((n) => n === "대출월별기록");
+      if (loanSheetName || loanHistSheetName) {
+        const existingLoanNames = new Set(loanData.loans.map((l) => l.name));
+        let mergedLoans = [...loanData.loans];
+        if (loanSheetName) {
+          const loanRows = XLSX.utils.sheet_to_json(wb.Sheets[loanSheetName], { defval: "" });
+          const newLoans = loanRows
+            .map((r) => ({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              name: String(r["이름"] || "").trim(),
+              originalBalance: Number(r["최초금액"]) || 0,
+              balance: Number(r["현재잔액"]) || 0,
+              rate: Number(r["이자율"]) || 0,
+              completed: String(r["상환완료"] || "").trim().toUpperCase() === "Y",
+            }))
+            .filter((l) => l.name && !existingLoanNames.has(l.name));
+          mergedLoans = [...mergedLoans, ...newLoans];
+          loanAddedCount = newLoans.length;
+        }
+        let mergedSnapshots = { ...(loanData.monthlySnapshots || {}) };
+        if (loanHistSheetName) {
+          const nameToId = {};
+          mergedLoans.forEach((l) => { nameToId[l.name] = l.id; });
+          const histRows = XLSX.utils.sheet_to_json(wb.Sheets[loanHistSheetName], { defval: "" });
+          histRows.forEach((r) => {
+            const month = String(r["월"] || "").trim();
+            const name = String(r["대출이름"] || "").trim();
+            const balance = Number(r["잔액"]);
+            const loanId = nameToId[name];
+            if (month && loanId && !isNaN(balance)) {
+              mergedSnapshots[month] = { ...(mergedSnapshots[month] || {}), [loanId]: balance };
+              loanHistAddedCount++;
+            }
+          });
+        }
+        if (loanAddedCount > 0 || loanHistAddedCount > 0) {
+          const nextLoanData = { ...loanData, loans: mergedLoans, monthlySnapshots: mergedSnapshots };
+          setLoanData(nextLoanData);
+          debouncedSave(LOANS_KEY, nextLoanData, "대출 정보 저장에 실패했어요.");
+        }
+      }
+
+      // 자산 + 부채 (같이 처리해서 월별 스냅샷을 한 번에 합쳐요)
+      let assetAddedCount = 0;
+      const assetSheetName = wb.SheetNames.find((n) => n === "자산");
+      const liabSheetName = wb.SheetNames.find((n) => n === "부채");
+      if (assetSheetName || liabSheetName) {
+        const mergedAssetSnapshots = { ...(assetData.monthlySnapshots || {}) };
+        const ensureMonth = (month) => {
+          if (!mergedAssetSnapshots[month]) mergedAssetSnapshots[month] = { items: [], liabilities: [] };
+          else mergedAssetSnapshots[month] = { items: [...(mergedAssetSnapshots[month].items || [])], liabilities: [...(mergedAssetSnapshots[month].liabilities || [])] };
+        };
+        if (assetSheetName) {
+          const assetRows = XLSX.utils.sheet_to_json(wb.Sheets[assetSheetName], { defval: "" });
+          assetRows.forEach((r) => {
+            const month = String(r["월"] || "").trim();
+            const name = String(r["자산이름"] || "").trim();
+            const amount = Number(r["금액"]);
+            if (!month || !name || isNaN(amount)) return;
+            ensureMonth(month);
+            const existing = mergedAssetSnapshots[month].items.find((a) => a.name === name);
+            if (existing) existing.amount = amount;
+            else mergedAssetSnapshots[month].items.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name, amount });
+            assetAddedCount++;
+          });
+        }
+        if (liabSheetName) {
+          const liabRows = XLSX.utils.sheet_to_json(wb.Sheets[liabSheetName], { defval: "" });
+          liabRows.forEach((r) => {
+            const month = String(r["월"] || "").trim();
+            const name = String(r["부채이름"] || "").trim();
+            const amount = Number(r["금액"]);
+            if (!month || !name || isNaN(amount)) return;
+            ensureMonth(month);
+            const existing = mergedAssetSnapshots[month].liabilities.find((l) => l.name === name);
+            if (existing) existing.amount = amount;
+            else mergedAssetSnapshots[month].liabilities.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name, amount });
+            assetAddedCount++;
+          });
+        }
+        if (assetAddedCount > 0) {
+          const nextAssetData = { monthlySnapshots: mergedAssetSnapshots };
+          setAssetData(nextAssetData);
+          debouncedSave(ASSETS_KEY, nextAssetData, "자산 정보 저장에 실패했어요.");
+        }
+      }
+
+      // 예산
+      let budgetAddedCount = 0;
+      const budgetSheetName = wb.SheetNames.find((n) => n === "예산");
+      if (budgetSheetName) {
+        const budgetRows = XLSX.utils.sheet_to_json(wb.Sheets[budgetSheetName], { defval: "" });
+        const mergedBudgets = { ...monthlyBudgets };
+        budgetRows.forEach((r) => {
+          const month = String(r["월"] || "").trim();
+          const groupLabelStr = String(r["그룹"] || "").trim();
+          const amount = Number(r["예산금액"]);
+          const group = groups.find((g) => g.label === groupLabelStr);
+          if (!month || !group || isNaN(amount)) return;
+          mergedBudgets[month] = { ...(mergedBudgets[month] || {}), [group.id]: amount };
+          budgetAddedCount++;
+        });
+        if (budgetAddedCount > 0) persistBudgets(mergedBudgets);
+      }
+
+      // 기본 설정
+      let settingsRestored = false;
+      const settingsSheetName = wb.SheetNames.find((n) => n === "설정");
+      if (settingsSheetName) {
+        const settingsRows = XLSX.utils.sheet_to_json(wb.Sheets[settingsSheetName], { defval: "" });
+        const settingsMap = {};
+        settingsRows.forEach((r) => { settingsMap[String(r["항목"] || "").trim()] = r["값"]; });
+        const nextSettings = { ...settings };
+        if (settingsMap["정산시작일"] != null && settingsMap["정산시작일"] !== "") nextSettings.cycleStartDay = Number(settingsMap["정산시작일"]) || 1;
+        if (settingsMap["가계부이름"]) nextSettings.title = String(settingsMap["가계부이름"]);
+        if (settingsMap["대출상환모드"]) nextSettings.loanModeEnabled = String(settingsMap["대출상환모드"]).trim().toUpperCase() !== "OFF";
+        if (settingsMap["환율통화"]) nextSettings.fxCurrency = String(settingsMap["환율통화"]);
+        if (settingsMap["환율값"] != null && settingsMap["환율값"] !== "") nextSettings.fxRate = Number(settingsMap["환율값"]) || 0;
+        persistSettings(nextSettings);
+        if (settingsMap["대출목표일"]) {
+          persistLoans({ ...loanData, targetDate: String(settingsMap["대출목표일"]) });
+        }
+        settingsRestored = true;
+      }
+
+      const summaryParts = [];
+      if (newOnes.length > 0) summaryParts.push(`거래 ${newOnes.length}건`);
+      if (recurAddedCount > 0) summaryParts.push(`정기지출 ${recurAddedCount}건`);
+      if (loanAddedCount > 0) summaryParts.push(`대출 ${loanAddedCount}건`);
+      if (loanHistAddedCount > 0) summaryParts.push(`대출기록 ${loanHistAddedCount}건`);
+      if (assetAddedCount > 0) summaryParts.push(`자산·부채 ${assetAddedCount}건`);
+      if (budgetAddedCount > 0) summaryParts.push(`예산 ${budgetAddedCount}건`);
+      if (settingsRestored) summaryParts.push("설정");
+
+      if (summaryParts.length === 0) {
+        setSaveError("엑셀에서 읽을 수 있는 내용이 없어요. 이전에 이 앱에서 내보낸 파일인지 확인해주세요.");
         return;
       }
-      const ok = await persistTx([...newOnes, ...transactions]);
-      if (ok) {
-        setToast(
-          recurAddedCount > 0
-            ? `거래 ${newOnes.length}건, 정기지출 ${recurAddedCount}건 불러왔어요`
-            : `${newOnes.length}건 불러왔어요`
-        );
+
+      if (newOnes.length > 0) {
+        const ok = await persistTx([...newOnes, ...transactions]);
+        if (!ok) return;
       }
+      setToast(`${summaryParts.join(", ")} 불러왔어요`);
     } catch (err) {
       setSaveError("엑셀 파일을 읽는 데 실패했어요. 파일 형식을 확인해주세요.");
     } finally {
@@ -1114,10 +1774,6 @@ function HouseholdBudget() {
                 <span className="truncate">{settings.title || "우리집 가계부"}</span>
               </h1>
             )}
-            <p className="text-sm text-slate-500 mt-1">수입 · 지출 · 예산 · 대출 상환까지 한번에 관리해요.</p>
-            <p className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-1.5 mt-2 inline-block">
-              🔒 개인 계정 — 나만 볼 수 있는 데이터예요. 다른 사람이 로그인해도 서로 안 보여요
-            </p>
           </div>
           <div className="relative shrink-0">
             <button
@@ -1130,7 +1786,7 @@ function HouseholdBudget() {
             {showHeaderMenu && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowHeaderMenu(false)} />
-                <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-20 w-44">
+                <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-20 w-60">
                   <button
                     onClick={() => {
                       setTitleDraft(settings.title || "우리집 가계부");
@@ -1142,10 +1798,7 @@ function HouseholdBudget() {
                     제목 수정
                   </button>
                   <button
-                    onClick={() => {
-                      openCategoryManager();
-                      setShowHeaderMenu(false);
-                    }}
+                    onClick={() => { openCategoryManager(); setShowHeaderMenu(false); }}
                     className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   >
                     카테고리 관리
@@ -1160,6 +1813,30 @@ function HouseholdBudget() {
                     대출상환모드 {settings.loanModeEnabled === false ? "켜기" : "끄기"}
                   </button>
                   <button
+                    onClick={() => {
+                      setCycleDraft(settings.cycleStartDay || 1);
+                      setShowCycleModal(true);
+                      setShowHeaderMenu(false);
+                    }}
+                    className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    정산 시작일 설정
+                  </button>
+                  <div className="border-t border-slate-100 my-1" />
+                  <button
+                    onClick={() => { exportToExcel("all"); setShowHeaderMenu(false); }}
+                    className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+                  >
+                    <Download size={14} /> 엑셀 백업(대출·자산·부채)
+                  </button>
+                  <button
+                    onClick={() => { importInputRef.current && importInputRef.current.click(); setShowHeaderMenu(false); }}
+                    className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm text-emerald-700 hover:bg-slate-50"
+                  >
+                    <Upload size={14} /> 엑셀 백업 불러오기
+                  </button>
+                  <div className="border-t border-slate-100 my-1" />
+                  <button
                     onClick={() => { signOutUser(); setShowHeaderMenu(false); }}
                     className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm text-red-500 hover:bg-slate-50"
                   >
@@ -1171,6 +1848,633 @@ function HouseholdBudget() {
           </div>
         </div>
       </header>
+
+      <div className="flex gap-1 bg-slate-100 rounded-xl p-1 mb-5">
+        <button
+          onClick={() => setPage("home")}
+          className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${page === "home" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
+        >
+          홈
+        </button>
+        <button
+          onClick={() => setPage("stats")}
+          className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${page === "stats" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
+        >
+          통계
+        </button>
+      </div>
+
+      {page === "stats" ? (
+        <>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
+          <h3 className="text-sm font-semibold text-slate-700 mb-3">월별 수입·지출 추이</h3>
+
+          <div className="flex gap-1.5 mb-3 overflow-x-auto">
+            {[["3", "3개월"], ["6", "6개월"], ["12", "12개월"], ["all", "전체"], ["custom", "기간 설정"]].map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => setStatsPeriod(val)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition ${statsPeriod === val ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {statsPeriod === "custom" && (
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div>
+                <label className="text-[11px] text-slate-500 block mb-1">시작</label>
+                <DatePickerField value={statsFrom} onChange={setStatsFrom} />
+              </div>
+              <div>
+                <label className="text-[11px] text-slate-500 block mb-1">끝</label>
+                <DatePickerField value={statsTo} onChange={setStatsTo} />
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3 mb-3">
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              <input type="checkbox" checked={showIncome} onChange={(e) => setShowIncome(e.target.checked)} className="w-3.5 h-3.5 accent-[#34d399]" />
+              수입
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              <input type="checkbox" checked={showExpense} onChange={(e) => setShowExpense(e.target.checked)} className="w-3.5 h-3.5 accent-[#f87171]" />
+              지출
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              <input type="checkbox" checked={showNet} onChange={(e) => setShowNet(e.target.checked)} className="w-3.5 h-3.5 accent-[#38bdf8]" />
+              순현금흐름
+            </label>
+          </div>
+
+          {monthlyTrend.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-10">이 기간엔 기록이 없어요.</p>
+          ) : !showIncome && !showExpense && !showNet ? (
+            <p className="text-sm text-slate-400 text-center py-10">위에서 하나 이상 체크해주세요.</p>
+          ) : (
+            <>
+              <div style={{ width: "100%", height: 260 }}>
+                <ResponsiveContainer>
+                  <ComposedChart data={monthlyTrend} margin={{ top: 26, right: 8, left: 8, bottom: 20 }} barCategoryGap="30%" barGap={8}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12 }} stroke="#94a3b8" tickMargin={14} />
+                    <YAxis hide domain={[(dataMin) => Math.min(dataMin, 0), (dataMax) => Math.max(dataMax, 0)]} />
+                    {showIncome && <Bar dataKey="income" name="수입" fill="#34d399" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(monthlyTrend, "income", 11)} />}
+                    {showExpense && <Bar dataKey="expense" name="지출" fill="#f87171" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(monthlyTrend, "expense", 0)} />}
+                    {showNet && <Line type="linear" dataKey="net" name="순현금흐름" stroke="#38bdf8" strokeWidth={2.5} dot={{ r: 3 }} label={makeLineValueLabel("#0284c7")} />}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-100 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-400 border-b border-slate-100">
+                      <th className="text-left font-medium py-1.5 pr-3 sticky left-0 bg-white"> </th>
+                      {monthlyTrend.map((m) => (
+                        <th key={m.month} colSpan={2} className="text-center font-medium py-1.5 px-2 whitespace-nowrap">{m.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-slate-50">
+                      <td className="py-1.5 pr-3 text-slate-700 font-medium whitespace-nowrap sticky left-0 bg-white">수입</td>
+                      {monthlyTrend.map((m, i) => (
+                        <React.Fragment key={m.month}>
+                          <td className="py-1.5 pl-2 text-right text-emerald-600 whitespace-nowrap">+{formatWon(m.income)}</td>
+                          <td className="py-1.5 pl-1 pr-2 text-left whitespace-nowrap">{i > 0 && renderDeltaBadge(m.income, monthlyTrend[i - 1].income)}</td>
+                        </React.Fragment>
+                      ))}
+                    </tr>
+                    <tr className="border-b border-slate-50">
+                      <td className="py-1.5 pr-3 text-slate-700 font-medium whitespace-nowrap sticky left-0 bg-white">지출</td>
+                      {monthlyTrend.map((m, i) => (
+                        <React.Fragment key={m.month}>
+                          <td className="py-1.5 pl-2 text-right text-red-500 whitespace-nowrap">-{formatWon(m.expense)}</td>
+                          <td className="py-1.5 pl-1 pr-2 text-left whitespace-nowrap">{i > 0 && renderDeltaBadge(m.expense, monthlyTrend[i - 1].expense)}</td>
+                        </React.Fragment>
+                      ))}
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 text-slate-700 font-semibold whitespace-nowrap sticky left-0 bg-white">순현금흐름</td>
+                      {monthlyTrend.map((m, i) => (
+                        <React.Fragment key={m.month}>
+                          <td className={`py-1.5 pl-2 text-right font-semibold whitespace-nowrap ${m.net >= 0 ? "text-slate-800" : "text-red-600"}`}>
+                            {formatWon(m.net)}
+                          </td>
+                          <td className="py-1.5 pl-1 pr-2 text-left whitespace-nowrap">{i > 0 && renderDeltaBadge(m.net, monthlyTrend[i - 1].net)}</td>
+                        </React.Fragment>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-slate-700">카테고리별 지출 추이</h3>
+            <select
+              value={statsCategoryGroup}
+              onChange={(e) => setStatsCategoryGroup(e.target.value)}
+              className="h-8 border border-slate-200 rounded-lg px-2 text-xs bg-white text-slate-600"
+            >
+              <option value="전체">그룹 선택</option>
+              {EXPENSE_GROUPS.map((g) => <option key={g.label} value={g.label}>{g.label}</option>)}
+            </select>
+          </div>
+          {statsCategoryGroup === "전체" ? (
+            <p className="text-sm text-slate-400 text-center py-10">위에서 카테고리 그룹을 선택해보세요.</p>
+          ) : categoryTrendStacked.data.length === 0 || categoryTrendStacked.data.every((m) => categoryTrendStacked.subCats.every((c) => !m[c])) ? (
+            <p className="text-sm text-slate-400 text-center py-10">이 기간엔 "{statsCategoryGroup}" 지출이 없어요.</p>
+          ) : (
+            <>
+              <div style={{ width: "100%", height: 220 }}>
+                <ResponsiveContainer>
+                  <BarChart data={categoryTrendStacked.data} margin={{ top: 28, right: 16, left: 8, bottom: 5 }} barCategoryGap="15%">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                    <YAxis hide />
+                    {categoryTrendStacked.subCats.map((c, idx) => (
+                      <Bar
+                        key={c}
+                        dataKey={c}
+                        name={c}
+                        stackId="a"
+                        fill={categoryColor(c)}
+                        maxBarSize={64}
+                        label={idx === categoryTrendStacked.subCats.length - 1 ? makeStackedTotalLabel(categoryTrendStacked.data, categoryTrendStacked.subCats) : undefined}
+                      />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-100 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-400 border-b border-slate-100">
+                      <th className="text-left font-medium py-1.5 pr-3 sticky left-0 bg-white"> </th>
+                      {categoryTrendStacked.data.map((m) => (
+                        <th key={m.month} colSpan={2} className="text-center font-medium py-1.5 px-2 whitespace-nowrap">{m.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {categoryTrendStacked.subCats.map((c) => (
+                      <tr key={c} className="border-b border-slate-50">
+                        <td className="py-1.5 pr-3 text-slate-700 font-medium whitespace-nowrap sticky left-0 bg-white">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: categoryColor(c) }} />
+                            {c}
+                          </span>
+                        </td>
+                        {categoryTrendStacked.data.map((m, i) => (
+                          <React.Fragment key={m.month}>
+                            <td className="py-1.5 pl-2 text-right text-slate-600 whitespace-nowrap">{formatWon(m[c] || 0)}</td>
+                            <td className="py-1.5 pl-1 pr-2 text-left whitespace-nowrap">{i > 0 && renderDeltaBadge(m[c] || 0, categoryTrendStacked.data[i - 1][c] || 0)}</td>
+                          </React.Fragment>
+                        ))}
+                      </tr>
+                    ))}
+                    <tr>
+                      <td className="py-1.5 pr-3 text-slate-700 font-semibold whitespace-nowrap sticky left-0 bg-white">합계</td>
+                      {categoryTrendStacked.data.map((m, i) => {
+                        const total = categoryTrendStacked.subCats.reduce((s, c) => s + (m[c] || 0), 0);
+                        const prevTotal = i > 0 ? categoryTrendStacked.subCats.reduce((s, c) => s + (categoryTrendStacked.data[i - 1][c] || 0), 0) : null;
+                        return (
+                          <React.Fragment key={m.month}>
+                            <td className="py-1.5 pl-2 text-right font-semibold text-slate-800 whitespace-nowrap">{formatWon(total)}</td>
+                            <td className="py-1.5 pl-1 pr-2 text-left whitespace-nowrap">{i > 0 && renderDeltaBadge(total, prevTotal)}</td>
+                          </React.Fragment>
+                        );
+                      })}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+
+
+        <div id="asset-input-card" className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
+          <div className="flex items-center justify-between">
+            <button onClick={() => setShowAssetInputCard((s) => !s)} className="flex-1 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-700">자산·부채 입력</h3>
+              {showAssetInputCard ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+            </button>
+            <button
+              onClick={() => setShowAssetHelpModal(true)}
+              className="ml-2 w-5 h-5 shrink-0 rounded-full border border-slate-300 text-slate-400 text-xs font-semibold flex items-center justify-center hover:bg-slate-50"
+              aria-label="사용법"
+            >
+              ?
+            </button>
+          </div>
+
+          {showAssetInputCard && (
+          <>
+          <div className="flex items-center gap-2 mb-1 mt-3">
+            <label className="text-xs text-slate-500 shrink-0">기록 월</label>
+            <select
+              value={assetViewMonth}
+              onChange={(e) => setAssetViewMonth(e.target.value)}
+              className="h-9 border border-slate-200 rounded-lg px-2 text-sm bg-white"
+            >
+              {assetMonthOptions.map((m) => <option key={m} value={m}>{formatCycleLabel(m, 1)}</option>)}
+            </select>
+          </div>
+          {effectiveAssetView.isRecorded ? (() => {
+            const laterMonths = Object.keys(assetData.monthlySnapshots || {}).filter((m) => m > assetViewMonth).sort();
+            const nextRecorded = laterMonths[0];
+            const [vy, vm] = assetViewMonth.split("-").map(Number);
+            let ny = vy, nm = vm + 1;
+            if (nm > 12) { nm = 1; ny += 1; }
+            const immediateNextMonth = `${ny}-${String(nm).padStart(2, "0")}`;
+            const isImmediateNext = nextRecorded === immediateNextMonth;
+            return (
+              <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-3">
+                ✏️ {formatCycleLabel(assetViewMonth, 1)}에 직접 기록한 값이에요.{" "}
+                {nextRecorded
+                  ? (isImmediateNext
+                      ? `여기 금액을 고치면 ${formatCycleLabel(assetViewMonth, 1)}에만 적용돼요 — ${formatCycleLabel(nextRecorded, 1)}은 이미 따로 기록이 있어요. (새로 추가하거나 삭제하는 건 이후 기록에도 같이 반영돼요.)`
+                      : `여기 금액을 고치면 ${formatCycleLabel(nextRecorded, 1)} 전까지의 달에도 이 값이 이어져요 (${formatCycleLabel(nextRecorded, 1)}부터는 그때 기록한 값으로 바뀌어요). 새로 추가하거나 삭제하는 건 이후 기록에도 같이 반영돼요.`)
+                  : "여기 금액을 고치면 그 이후로 따로 기록하지 않은 모든 달(미래 포함)에 이 값이 계속 이어져요."}
+              </p>
+            );
+          })() : effectiveAssetView.sourceMonth ? (
+            <p className="text-xs text-sky-600 bg-sky-50 border border-sky-100 rounded-lg px-2.5 py-1.5 mb-3">
+              ℹ️ {formatCycleLabel(assetViewMonth, 1)}에 직접 기록이 없어서, {formatCycleLabel(effectiveAssetView.sourceMonth, 1)} 값을 쓰고 있어요. 수정하면 {formatCycleLabel(assetViewMonth, 1)}에만 적용되고, 이후 달에는 여기서 수정한 값이 이어져요.
+            </p>
+          ) : (
+            <p className="text-xs text-slate-400 mb-3">아직 기록이 없어요. 값을 입력하면 {formatCycleLabel(assetViewMonth, 1)} 기록으로 저장돼요.</p>
+          )}
+
+          <div className="bg-slate-50 rounded-xl p-3 mb-1">
+            <div className="flex justify-between text-xs text-slate-500 mb-1">
+              <span>총 자산</span>
+              <span className="font-semibold text-slate-700 tabular-nums">{formatWon(assetTotals.totalAssets)}</span>
+            </div>
+            <div className="flex justify-between text-xs text-slate-500 mb-2">
+              <span>총 부채 (대출잔액)</span>
+              <span className="font-semibold text-red-500 tabular-nums">-{formatWon(assetTotals.totalDebt)}</span>
+            </div>
+            <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+              <span className="text-sm font-semibold text-slate-800">순자산</span>
+              <span className={`text-base font-bold tabular-nums ${assetTotals.netWorth >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                {formatWon(assetTotals.netWorth)}
+              </span>
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-400 mb-3">항목을 눌러서 수정·삭제할 수 있어요.</p>
+
+          <h4 className="text-xs font-semibold text-slate-500 mb-2">자산</h4>
+          {effectiveAssetView.items.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-3">등록된 자산이 없어요. 아래에서 추가해보세요.</p>
+          ) : (
+            <ul className="divide-y divide-slate-100 mb-1">
+              {effectiveAssetView.items.map((a) => (
+                <li key={a.id} onClick={() => openAssetSheet("asset", a)} className="py-2 flex items-center gap-1.5 cursor-pointer active:bg-slate-50 rounded-lg transition">
+                  <span className="flex-1 min-w-0 text-sm text-slate-700 truncate">{a.name}</span>
+                  <span className="text-sm font-semibold text-slate-700 shrink-0">{formatWon(a.amount)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {showAddAssetForm ? (
+            <form onSubmit={(e) => { if (addAssetItem(e)) setShowAddAssetForm(false); }} className="space-y-1.5 mb-5 mt-2">
+              <input
+                ref={assetNameInputRef}
+                autoFocus
+                value={newAssetName}
+                onChange={(e) => { setNewAssetName(e.target.value); setAssetErrorMsg(""); }}
+                placeholder="자산 이름"
+                className="w-full h-9 border border-slate-200 rounded-lg px-2 text-sm bg-white"
+              />
+              {(assetErrorMsg || isDuplicateAssetName) && <p className="text-xs text-red-500">{assetErrorMsg || "이미 있는 이름이에요"}</p>}
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={formatNumberInput(newAssetAmount)}
+                  onChange={(e) => setNewAssetAmount(parseNumberInput(e.target.value))}
+                  placeholder="금액"
+                  className="flex-1 h-9 border border-slate-200 rounded-lg px-2 text-sm bg-white text-right"
+                />
+                <button
+                  type="submit"
+                  disabled={isDuplicateAssetName}
+                  className={`px-4 h-9 rounded-lg text-white text-xs shrink-0 ${isDuplicateAssetName ? "bg-slate-300 cursor-not-allowed" : "bg-slate-900"}`}
+                >
+                  추가
+                </button>
+                <button type="button" onClick={() => setShowAddAssetForm(false)} className="px-3 h-9 rounded-lg border border-slate-200 text-slate-500 text-xs shrink-0">취소</button>
+              </div>
+            </form>
+          ) : (
+            <button onClick={() => setShowAddAssetForm(true)} className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 py-2 mb-3">
+              <Plus size={13} /> 자산 추가
+            </button>
+          )}
+
+          <h4 className="text-xs font-semibold text-red-600 mb-2 pt-3 border-t border-slate-100">부채</h4>
+          {effectiveAssetView.liabilities.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-2">등록된 부채가 없어요.</p>
+          ) : (
+            <ul className="divide-y divide-slate-100 mb-1">
+              {effectiveAssetView.liabilities.map((l) => (
+                <li key={l.id} onClick={() => openAssetSheet("liability", l)} className="py-2 flex items-center gap-1.5 cursor-pointer active:bg-slate-50 rounded-lg transition">
+                  <span className="flex-1 min-w-0 text-sm text-slate-700 truncate">{l.name}</span>
+                  <span className="text-sm font-semibold text-red-600 shrink-0">{formatWon(l.amount)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {showAddLiabilityForm ? (
+            <form onSubmit={(e) => { if (addLiabilityItem(e)) setShowAddLiabilityForm(false); }} className="space-y-1.5 mb-3 mt-2">
+              <input
+                ref={liabilityNameInputRef}
+                autoFocus
+                value={newLiabilityName}
+                onChange={(e) => { setNewLiabilityName(e.target.value); setLiabilityErrorMsg(""); }}
+                placeholder="부채 이름"
+                className="w-full h-9 border border-slate-200 rounded-lg px-2 text-sm bg-white"
+              />
+              {(liabilityErrorMsg || isDuplicateLiabilityName) && <p className="text-xs text-red-500">{liabilityErrorMsg || "이미 있는 이름이에요"}</p>}
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={formatNumberInput(newLiabilityAmount)}
+                  onChange={(e) => setNewLiabilityAmount(parseNumberInput(e.target.value))}
+                  placeholder="금액"
+                  className="flex-1 h-9 border border-slate-200 rounded-lg px-2 text-sm bg-white text-right"
+                />
+                <button
+                  type="submit"
+                  disabled={isDuplicateLiabilityName}
+                  className={`px-4 h-9 rounded-lg text-white text-xs shrink-0 ${isDuplicateLiabilityName ? "bg-slate-300 cursor-not-allowed" : "bg-slate-900"}`}
+                >
+                  추가
+                </button>
+                <button type="button" onClick={() => setShowAddLiabilityForm(false)} className="px-3 h-9 rounded-lg border border-slate-200 text-slate-500 text-xs shrink-0">취소</button>
+              </div>
+            </form>
+          ) : (
+            <button onClick={() => setShowAddLiabilityForm(true)} className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 py-2 mb-1">
+              <Plus size={13} /> 부채 추가
+            </button>
+          )}
+
+          <p className="text-xs font-medium text-slate-600 mb-1.5 mt-3">대출 <span className="font-normal text-slate-400">(부채에 포함)</span></p>
+          {loanData.loans.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-2">등록된 대출이 없어요. 홈 화면 "대출 상환 목표"에서 추가할 수 있어요.</p>
+          ) : loanData.loans.every((l) => assetViewLoanBalances[l.id] === undefined) ? (
+            <p className="text-xs text-slate-400 text-center py-2">{formatCycleLabel(assetViewMonth, 1)}엔 아직 등록된 대출이 없었어요.</p>
+          ) : (
+            <ul className="divide-y divide-slate-100 mb-1">
+              {loanData.loans.filter((l) => assetViewLoanBalances[l.id] !== undefined).map((l) => (
+                <li
+                  key={l.id}
+                  onClick={() => openAssetSheet("loan", { id: l.id, name: l.name, amount: assetViewLoanBalances[l.id] || 0 })}
+                  className="py-2 flex items-center gap-1.5 cursor-pointer active:bg-slate-50 rounded-lg transition"
+                >
+                  <span className="flex-1 min-w-0 text-sm text-slate-700 truncate">{l.name}</span>
+                  <span className="text-sm font-semibold text-red-600 shrink-0">{formatWon(assetViewLoanBalances[l.id] || 0)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-[11px] text-slate-400 mb-2 mt-1">대출 이름·이자율·목표일은 홈 화면 "대출 상환 목표"에서 관리해요.</p>
+
+          {Object.keys(assetData.monthlySnapshots || {}).length > 0 && (
+            <div className="border-t border-slate-100 pt-3">
+              <button onClick={() => setShowRecordedMonths((s) => !s)} className="w-full flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-slate-500">기록된 월</h4>
+                {showRecordedMonths ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
+              </button>
+              {showRecordedMonths && (
+              <ul className="divide-y divide-slate-50 max-h-40 overflow-y-auto">
+                {Object.keys(assetData.monthlySnapshots).sort().reverse().map((month) => {
+                  const snap = assetData.monthlySnapshots[month];
+                  const ta = (snap.items || []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
+                  const loanBalances = getEffectiveLoanBalances(loanData.monthlySnapshots, month, loanData.loans);
+                  const loanDebt = Object.values(loanBalances).reduce((s, v) => s + (Number(v) || 0), 0);
+                  const td = loanDebt + (snap.liabilities || []).reduce((s, l) => s + (Number(l.amount) || 0), 0);
+                  const nw = ta - td;
+                  return (
+                    <li key={month} className="flex items-center justify-between py-1.5 text-xs">
+                      <button onClick={() => setAssetViewMonth(month)} className="text-slate-500 hover:text-slate-800">
+                        {formatCycleLabel(month, 1)}
+                      </button>
+                      <div className="text-right">
+                        <div className={`font-medium ${nw >= 0 ? "text-slate-700" : "text-red-600"}`}>{formatWon(nw)}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">자산 {formatWon(ta)}, 부채 -{formatWon(td)}</div>
+                      </div>
+                      {confirmDeleteSnapshotMonth === month ? (
+                        <span className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => { deleteSnapshotMonth(month); setConfirmDeleteSnapshotMonth(null); }} className="text-[11px] px-1.5 py-0.5 rounded bg-red-500 text-white">삭제</button>
+                          <button onClick={() => setConfirmDeleteSnapshotMonth(null)} className="text-[11px] px-1.5 py-0.5 rounded border border-slate-200 text-slate-600">취소</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => { setConfirmDeleteSnapshotMonth(month); setToast("이후 달의 이월에 영향이 있어요"); }} className="text-slate-300 hover:text-red-500 shrink-0 ml-2" aria-label="기록 삭제">
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              )}
+            </div>
+          )}
+          </>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
+          <h3 className="text-sm font-semibold text-slate-700 mb-1">자산·부채 그래프</h3>
+          <p className="text-xs text-slate-400 mb-3">기록해두신 흐름이에요. 이어받은 달까지 포함해서 매끄럽게 이어져요.</p>
+
+          <div className="flex gap-3 mb-3">
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              <input type="checkbox" checked={showAssetBar} onChange={(e) => setShowAssetBar(e.target.checked)} className="w-3.5 h-3.5 accent-[#34d399]" />
+              자산
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              <input type="checkbox" checked={showDebtBar} onChange={(e) => setShowDebtBar(e.target.checked)} className="w-3.5 h-3.5 accent-[#f87171]" />
+              부채
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              <input type="checkbox" checked={showNetBar} onChange={(e) => setShowNetBar(e.target.checked)} className="w-3.5 h-3.5 accent-[#38bdf8]" />
+              순자산
+            </label>
+          </div>
+
+          {assetHistoryFiltered.length < 2 ? (
+            <p className="text-xs text-slate-400 text-center py-6">
+              자산 금액을 두 번 이상 수정하면, 그 흐름이 그래프로 쌓여요.
+            </p>
+          ) : !showAssetBar && !showDebtBar && !showNetBar ? (
+            <p className="text-sm text-slate-400 text-center py-10">위에서 하나 이상 체크해주세요.</p>
+          ) : (
+            <div style={{ width: "100%", height: 260 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={assetHistoryFiltered} margin={{ top: 26, right: 8, left: 8, bottom: 20 }} barCategoryGap="30%" barGap={8}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="label" tick={{ fontSize: 12 }} stroke="#94a3b8" tickMargin={14} />
+                  <YAxis hide domain={[(dataMin) => Math.min(dataMin, 0), (dataMax) => Math.max(dataMax, 0)]} />
+                  {showAssetBar && <Bar dataKey="totalAssets" name="자산" fill="#34d399" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(assetHistoryFiltered, "totalAssets", 11)} />}
+                  {showDebtBar && <Bar dataKey="totalDebt" name="부채" fill="#f87171" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(assetHistoryFiltered, "totalDebt", 0)} />}
+                  {showNetBar && <Line type="linear" dataKey="netWorth" name="순자산" stroke="#38bdf8" strokeWidth={2.5} dot={{ r: 3 }} label={makeLineValueLabel("#0284c7")} />}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-sm font-semibold text-slate-700">월별 재무상태표</h3>
+            <select
+              value={reportMonth}
+              onChange={(e) => setReportMonth(e.target.value)}
+              className="h-8 border border-slate-200 rounded-lg px-2 text-xs bg-white"
+            >
+              {monthOptions.map((m) => <option key={m} value={m}>{formatCycleLabel(m, settings.cycleStartDay)}</option>)}
+            </select>
+          </div>
+          <p className="text-xs text-slate-400 mb-3">
+            {balanceSheetSnapshot
+              ? `${formatCycleLabel(balanceSheetSnapshot.month, 1)} 기준으로 기록된(또는 이어받은) 값이에요.`
+              : "이 달 이전엔 저장된 자산 기록이 없어요."}
+          </p>
+
+          {balanceSheetSnapshot ? (
+            <div className="bg-slate-50 rounded-xl p-3 mb-3">
+              <div className="flex justify-between text-xs text-slate-500 mb-1">
+                <span>총 자산</span>
+                <span className="font-semibold text-slate-700 tabular-nums">{formatWon(balanceSheetSnapshot.totalAssets)}</span>
+              </div>
+              <div className="flex justify-between text-xs text-slate-500 mb-2">
+                <span>총 부채</span>
+                <span className="font-semibold text-red-500 tabular-nums">-{formatWon(balanceSheetSnapshot.totalDebt)}</span>
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                <span className="text-sm font-semibold text-slate-800">순자산</span>
+                <span className={`text-base font-bold tabular-nums ${balanceSheetSnapshot.netWorth >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                  {formatWon(balanceSheetSnapshot.netWorth)}
+                </span>
+              </div>
+              {balanceSheetSnapshot.netWorthChange != null && (
+                <div className="text-[11px] text-slate-400 pt-1.5 mt-1.5 border-t border-slate-100">
+                  전월대비 순자산 {balanceSheetSnapshot.netWorthChange >= 0 ? "+" : ""}{formatWon(balanceSheetSnapshot.netWorthChange)}
+                  {balanceSheetSnapshot.changeNote ? ` (${balanceSheetSnapshot.changeNote})` : ""}
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-400 text-center py-6">위 "자산·부채 입력" 카드에서 값을 기록하면 여기에 표시돼요.</p>
+          )}
+
+          {balanceSheetSnapshot && balanceSheetSnapshot.items.length > 0 && (
+            <div className="pt-2 border-t border-slate-100">
+              <h4 className="text-xs font-semibold text-slate-500 mb-1.5">자산 상세 ({formatCycleLabel(reportMonth, 1)} 기준)</h4>
+              <ul className="space-y-1">
+                {balanceSheetSnapshot.items.map((a) => (
+                  <li key={a.id} className="flex justify-between text-xs text-slate-600">
+                    <span className="truncate">{a.name}</span>
+                    <span className="font-medium">{formatWon(a.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {((balanceSheetSnapshot && balanceSheetSnapshot.loanDetail.length > 0) || (balanceSheetSnapshot && balanceSheetSnapshot.liabilities.length > 0)) && (
+            <div className="pt-2 mt-2 border-t border-slate-100">
+              <h4 className="text-xs font-semibold text-slate-500 mb-1.5">부채 상세 ({formatCycleLabel(reportMonth, 1)} 기준)</h4>
+              <ul className="space-y-1.5">
+                {balanceSheetSnapshot.loanDetail.map((l) => (
+                  <li key={l.id} className="text-xs">
+                    <div className="flex justify-between text-slate-600">
+                      <span className="truncate">{l.name} <span className="text-slate-400">(대출)</span></span>
+                      <span className="font-medium text-red-500">{formatWon(l.balance)}</span>
+                    </div>
+                    {l.paidThisMonth !== 0 && (
+                      <div className="text-[11px] text-slate-400">
+                        {l.paidThisMonth > 0 ? `이 달에 ${formatWon(l.paidThisMonth)} 갚았어요` : `이 달에 ${formatWon(-l.paidThisMonth)} 늘었어요`}
+                      </div>
+                    )}
+                  </li>
+                ))}
+                {balanceSheetSnapshot.liabilities.map((l) => (
+                  <li key={l.id} className="flex justify-between text-xs text-slate-600">
+                    <span className="truncate">{l.name}</span>
+                    <span className="font-medium text-red-500">{formatWon(l.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {loanData.loans.length > 0 && (
+            <div className="pt-2 mt-2 border-t border-slate-100">
+            <button
+              onClick={() => {
+                setShowAssetInputCard(true);
+                setTimeout(() => document.getElementById("asset-input-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+              }}
+              className="text-left text-[11px] text-slate-400 underline decoration-dotted"
+            >
+              자산·부채·대출 내역은 위 "자산·부채 입력" 카드에서 월별로 고칠 수 있어요. (누르면 바로 이동)
+            </button>
+            </div>
+          )}
+        </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
+        <h3 className="text-sm font-semibold text-slate-700 mb-3">{currentYear}년 누적 요약</h3>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <div className="bg-emerald-50 rounded-lg px-3 py-2">
+            <div className="text-[11px] text-emerald-600">총수입</div>
+            <div className="text-sm font-semibold text-emerald-700">{formatWon(yearStats.income)}</div>
+          </div>
+          <div className="bg-red-50 rounded-lg px-3 py-2">
+            <div className="text-[11px] text-red-500">총지출</div>
+            <div className="text-sm font-semibold text-red-600">{formatWon(yearStats.expense)}</div>
+          </div>
+          <div className="bg-green-50 rounded-lg px-3 py-2">
+            <div className="text-[11px] text-green-600">저축/투자</div>
+            <div className="text-sm font-semibold text-green-700">{formatWon(yearStats.savings)}</div>
+          </div>
+          {settings.loanModeEnabled !== false && (
+            <>
+              <div className="bg-purple-50 rounded-lg px-3 py-2">
+                <div className="text-[11px] text-purple-600">대출 원금상환</div>
+                <div className="text-sm font-semibold text-purple-700">{formatWon(yearStats.principal)}</div>
+              </div>
+              <div className="bg-rose-50 rounded-lg px-3 py-2">
+                <div className="text-[11px] text-rose-600">대출 이자</div>
+                <div className="text-sm font-semibold text-rose-700">{formatWon(yearStats.interest)}</div>
+              </div>
+            </>
+          )}
+          <div className="bg-slate-50 rounded-lg px-3 py-2">
+            <div className="text-[11px] text-slate-500">순증감 (수입-지출)</div>
+            <div className={`text-sm font-semibold ${yearStats.net >= 0 ? "text-emerald-700" : "text-red-600"}`}>{formatWon(yearStats.net)}</div>
+          </div>
+        </div>
+      </div>
+        </>
+      ) : (
+        <>
 
       {saveError && (
         <div className="mb-4 flex items-center justify-between gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -1200,7 +2504,7 @@ function HouseholdBudget() {
           className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-slate-800"
         >
           <span className="flex items-center gap-2">
-            📋 정기지출 체크리스트 ({selectedMonth}월)
+            📋 정기지출 체크리스트 ({formatCycleLabel(selectedMonth, settings.cycleStartDay)})
             {recurringItems.length > 0 && (
               <span className="text-xs font-normal text-slate-400">
                 ({recurringItems.filter((item) => monthTx.some((t) => t.type === "expense" && t.category === item.category && t.memo === item.name)).length}/{recurringItems.length})
@@ -1563,31 +2867,170 @@ function HouseholdBudget() {
         <h2 className="text-lg font-semibold text-slate-900">월별 요약</h2>
         <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}
           className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white">
-          {monthOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+          {monthOptions.map((m) => <option key={m} value={m}>{formatCycleLabel(m, settings.cycleStartDay)}</option>)}
         </select>
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
-        <h3 className="text-sm font-semibold text-slate-700 mb-3">이번 달 잔액 계산</h3>
-        <ul className="text-sm divide-y divide-slate-100">
-          <li className="flex justify-between py-1.5">
-            <span className="text-slate-600">총수입 (전체)</span>
-            <span className="font-medium text-emerald-600">+{formatWon(totalIncome)}</span>
-          </li>
-          {groups.map((g) => {
-            const spent = monthTx.filter((t) => t.type === "expense" && g.categories.includes(t.category)).reduce((s, t) => s + t.amount, 0);
-            return (
-              <li key={g.id} className="flex justify-between py-1.5">
-                <span className="text-slate-600">{g.label}</span>
-                <span className="font-medium text-red-500">-{formatWon(spent)}</span>
-              </li>
-            );
-          })}
-        </ul>
-        <div className="flex justify-between items-center mt-2 pt-3 border-t border-slate-200">
-          <span className="text-sm font-semibold text-slate-800">이번 달 남은 돈</span>
-          <span className={`text-base font-bold ${balance >= 0 ? "text-emerald-600" : "text-red-500"}`}>{formatWon(balance)}</span>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-slate-700">이번 달 잔액 계산</h3>
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setBalanceCardView("summary")}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition ${balanceCardView === "summary" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
+            >
+              요약보기
+            </button>
+            <button
+              onClick={() => setBalanceCardView("detail")}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition ${balanceCardView === "detail" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
+            >
+              현금흐름표
+            </button>
+          </div>
         </div>
+
+        {balanceCardView === "summary" ? (
+          <>
+            <ul className="text-sm divide-y divide-slate-100">
+              <li className="flex justify-between py-1.5">
+                <span className="text-slate-600">총수입 (전체)</span>
+                <span className="font-medium text-emerald-600">+{formatWon(totalIncome)}</span>
+              </li>
+              {groups.map((g) => {
+                const spent = monthTx.filter((t) => t.type === "expense" && g.categories.includes(t.category)).reduce((s, t) => s + t.amount, 0);
+                return (
+                  <li key={g.id} className="flex justify-between py-1.5">
+                    <span className="text-slate-600">{g.label}</span>
+                    <span className="font-medium text-red-500">-{formatWon(spent)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex justify-between items-center mt-2 pt-3 border-t border-slate-200">
+              <span className="text-sm font-semibold text-slate-800">이번 달 순현금흐름</span>
+              <span className={`text-base font-bold ${balance >= 0 ? "text-emerald-600" : "text-red-500"}`}>{formatWon(balance)}</span>
+            </div>
+          </>
+        ) : (
+          <>
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 mb-2.5">
+            <h4 className="text-xs font-bold text-emerald-700 mb-1.5">🟢 수입</h4>
+            {cashFlowStatement.incomeItems.length === 0 ? (
+              <p className="text-xs text-slate-400 py-1">기록 없음</p>
+            ) : (
+              <ul className="space-y-1">
+                {cashFlowStatement.incomeItems.map((i) => (
+                  <li key={i.name} className="flex justify-between text-xs text-slate-600">
+                    <span>{i.name}</span>
+                    <span className="text-emerald-600 font-medium">+{formatWon(i.value)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-between text-xs font-bold text-emerald-800 mt-1.5 pt-1.5 border-t border-emerald-200">
+              <span>수입 합계</span>
+              <span>{formatWon(cashFlowStatement.totalIncome)}</span>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-red-100 bg-red-50/50 p-3 mb-2.5">
+            <h4 className="text-xs font-bold text-red-700 mb-1.5">🔴 고정지출 <span className="font-normal text-slate-400">· 매달 정해진 시기에 나가는 지출</span></h4>
+            {cashFlowStatement.fixedItems.length === 0 ? (
+              <p className="text-xs text-slate-400 py-1">기록 없음</p>
+            ) : (
+              <ul className="space-y-1">
+                {cashFlowStatement.fixedItems.map((i) => (
+                  <li key={i.name} className="flex justify-between text-xs text-slate-600">
+                    <span>{i.name}</span>
+                    <span className={`font-medium ${i.value < 0 ? "text-emerald-600" : "text-red-500"}`}>
+                      {i.value < 0 ? "+" : "-"}{formatWon(Math.abs(i.value))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-between text-xs font-bold text-red-800 mt-1.5 pt-1.5 border-t border-red-200">
+              <span>고정지출 합계</span>
+              <span>{formatWon(cashFlowStatement.totalFixed)}</span>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-3 mb-2.5">
+            <h4 className="text-xs font-bold text-sky-700 mb-1.5">🔵 자산형성지출 <span className="font-normal text-slate-400">· 저축·투자, 대출 원금상환처럼 내 자산으로 쌓이는 지출</span></h4>
+            {cashFlowStatement.assetItems.length === 0 ? (
+              <p className="text-xs text-slate-400 py-1">기록 없음</p>
+            ) : (
+              <ul className="space-y-1">
+                {cashFlowStatement.assetItems.map((i) => (
+                  <li key={i.name} className="flex justify-between text-xs text-slate-600">
+                    <span>{i.name}</span>
+                    <span className={`font-medium ${i.value < 0 ? "text-emerald-600" : "text-sky-600"}`}>
+                      {i.value < 0 ? "+" : "-"}{formatWon(Math.abs(i.value))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-between text-xs font-bold text-sky-800 mt-1.5 pt-1.5 border-t border-sky-200">
+              <span>자산형성지출 합계</span>
+              <span>{formatWon(cashFlowStatement.totalAsset)}</span>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-red-100 bg-red-50/50 p-3 mb-2.5">
+            <h4 className="text-xs font-bold text-red-700 mb-2">🔴 변동지출 <span className="font-normal text-slate-400">· 내 의지로 조절 가능한 지출</span></h4>
+            {cashFlowStatement.variableGroups.length === 0 ? (
+              <p className="text-xs text-slate-400 py-1">기록 없음</p>
+            ) : (
+              cashFlowStatement.variableGroups.map((g) => (
+                <div key={g.label} className="mb-2 last:mb-0">
+                  <div className="flex justify-between text-[11px] font-semibold text-slate-500 mb-1">
+                    <span>{g.label}</span>
+                    <span className={g.total < 0 ? "text-emerald-600" : ""}>
+                      {g.total < 0 ? "+" : "-"}{formatWon(Math.abs(g.total))}
+                    </span>
+                  </div>
+                  <ul className="space-y-1 pl-2">
+                    {g.items.map((i) => (
+                      <li key={i.name} className="flex justify-between text-xs text-slate-600">
+                        <span>{i.name}</span>
+                        <span className={`font-medium ${i.value < 0 ? "text-emerald-600" : "text-red-500"}`}>
+                          {i.value < 0 ? "+" : "-"}{formatWon(Math.abs(i.value))}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
+            )}
+            <div className="flex justify-between text-xs font-bold text-red-800 mt-1.5 pt-1.5 border-t border-red-200">
+              <span>변동지출 합계</span>
+              <span>{formatWon(cashFlowStatement.totalVariable)}</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-50 rounded-xl p-3 mb-2">
+            <div className="flex justify-between text-xs text-slate-500 mb-1">
+              <span>변동지출 한도 <span className="text-slate-400">(수입 - 고정 - 자산형성)</span></span>
+              <span className="font-semibold text-slate-700">{formatWon(cashFlowStatement.variableLimit)}</span>
+            </div>
+            <div className="flex justify-between text-xs text-slate-500">
+              <span>실제 변동지출</span>
+              <span className={`font-semibold ${cashFlowStatement.totalVariable > cashFlowStatement.variableLimit ? "text-red-500" : "text-emerald-600"}`}>
+                {formatWon(cashFlowStatement.totalVariable)}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+            <span className="text-sm font-semibold text-slate-800">순현금흐름</span>
+            <span className={`text-base font-bold ${cashFlowStatement.net >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+              {formatWon(cashFlowStatement.net)}
+            </span>
+          </div>
+          </>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-3 mb-5">
@@ -1698,7 +3141,10 @@ function HouseholdBudget() {
       {showCategoryManager && (
         <>
           <div className="fixed inset-0 bg-black/40 z-40" onClick={cancelCategoryManager} />
-          <div className="fixed inset-x-3 top-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl shadow-lg max-w-md mx-auto max-h-[85vh] flex flex-col">
+          <div
+            className="fixed inset-x-3 top-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl shadow-lg max-w-md mx-auto flex flex-col"
+            style={{ maxHeight: Math.round(viewportH * 0.8) + "px" }}
+          >
           <div className="flex items-center justify-between px-4 pt-4 pb-3 shrink-0 border-b border-slate-100">
             <h3 className="text-sm font-semibold text-slate-700">카테고리 관리</h3>
             <button onClick={cancelCategoryManager} className="text-slate-400 hover:text-slate-700">
@@ -1706,7 +3152,7 @@ function HouseholdBudget() {
             </button>
           </div>
 
-          <div className="overflow-y-auto px-4 py-3 flex-1 min-h-0" style={{ WebkitOverflowScrolling: "touch" }}>
+          <div className="overflow-y-auto px-4 py-3 flex-1 min-h-0" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
           <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">지출 카테고리</h4>
           {draftGroups.map((g) => (
             <div key={g.id} className="mb-4 last:mb-0 bg-slate-50 rounded-xl p-3">
@@ -1909,30 +3355,6 @@ function HouseholdBudget() {
         </>
       )}
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
-        <h3 className="text-sm font-semibold text-slate-700 mb-1">비정기 지출</h3>
-        <p className="text-xs text-slate-400 mb-3">매달 예산에 포함하지 않고 별도로 관리해요.</p>
-        <div className="flex justify-between items-center bg-rose-50 border border-rose-100 rounded-xl px-3 py-2 mb-3">
-          <span className="text-xs text-rose-700">이번 달 비정기 지출 합계</span>
-          <span className="text-sm font-bold text-rose-700">{formatWon(irregularSpent)}</span>
-        </div>
-        {irregularByCategory.length > 0 ? (
-          <ul className="space-y-1.5">
-            {irregularByCategory.map((c) => (
-              <li key={c.name} className="flex justify-between text-xs text-slate-600">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: categoryColor(c.name) }} />
-                  {c.name}
-                </span>
-                <span className="font-medium">{formatWon(c.value)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-xs text-slate-400 text-center py-2">이번 달 비정기 지출 기록이 없어요.</p>
-        )}
-      </div>
-
       {monthTx.some((t) => t.type === "expense") && (
         <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
           <div className="flex items-center justify-between mb-2">
@@ -1950,17 +3372,49 @@ function HouseholdBudget() {
             </select>
           </div>
           {categoryData.length > 0 ? (
-            <div style={{ width: "100%", height: 220 }}>
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={categoryData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={45} outerRadius={80} paddingAngle={2}>
-                    {categoryData.map((entry, i) => <Cell key={i} fill={categoryColor(entry.name)} />)}
-                  </Pie>
-                  <Tooltip formatter={(v) => formatWon(v)} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            <>
+              <div style={{ width: "100%", height: 270 }}>
+                <ResponsiveContainer>
+                  <PieChart margin={{ top: 24, right: 44, left: 44, bottom: 24 }}>
+                    <Pie
+                      data={categoryData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={42}
+                      outerRadius={68}
+                      paddingAngle={2}
+                      label={renderPieSliceLabel}
+                      labelLine={false}
+                    >
+                      {categoryData.map((entry, i) => <Cell key={i} fill={categoryColor(entry.name)} />)}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              {(() => {
+                const total = categoryData.reduce((s, c) => s + c.value, 0);
+                return (
+                  <table className="w-full mt-2 text-xs border-collapse">
+                    <tbody>
+                      {categoryData.map((c) => (
+                        <tr key={c.name} className="border-b border-slate-50 last:border-0">
+                          <td className="py-1.5 text-center text-slate-400 whitespace-nowrap w-12">{total > 0 ? ((c.value / total) * 100).toFixed(0) : 0}%</td>
+                          <td className="py-1.5">
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: categoryColor(c.name) }} />
+                              <span className="text-slate-700 truncate">{c.name}</span>
+                            </span>
+                          </td>
+                          <td className="py-1.5 text-right text-slate-800 font-medium whitespace-nowrap w-28">{formatWon(c.value)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
+            </>
           ) : (
             <p className="text-sm text-slate-400 text-center py-10">이 그룹에는 이번 달 지출이 없어요.</p>
           )}
@@ -1969,56 +3423,32 @@ function HouseholdBudget() {
               <h4 className="text-xs font-semibold text-slate-500 mb-2">
                 {pieGroupFilter === "전체" ? "전체" : pieGroupFilter} 중 금액 큰 거래 Top 5
               </h4>
-              <ul className="space-y-1.5">
-                {topGroupTransactions.map((t, i) => (
-                  <li key={t.id} className="flex items-center justify-between text-xs">
-                    <span className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-slate-300 font-medium w-3 shrink-0">{i + 1}</span>
-                      <span className="text-slate-400 shrink-0">{t.category}</span>
-                      <span className="text-slate-700 truncate">{t.memo || "-"}</span>
-                    </span>
-                    <span className="text-slate-800 font-medium shrink-0 ml-2">{formatWon(t.amount)}</span>
-                  </li>
-                ))}
-              </ul>
+              <table className="w-full text-xs border-collapse">
+                <tbody>
+                  {topGroupTransactions.map((t, i) => (
+                    <tr key={t.id}>
+                      <td className="py-1 pr-1.5 text-slate-300 font-medium w-4">{i + 1}</td>
+                      <td className="py-1 pr-2">
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className="inline-block shrink-0 truncate text-[11px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap"
+                            style={{ backgroundColor: `${categoryColor(t.category)}20`, color: categoryColor(t.category) }}
+                          >
+                            {t.category}
+                          </span>
+                          <span className="text-slate-400 truncate">{t.memo || "-"}</span>
+                        </span>
+                      </td>
+                      <td className="py-1 pl-2 text-right text-slate-500 font-medium whitespace-nowrap w-28">{formatWon(t.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
-        <h3 className="text-sm font-semibold text-slate-700 mb-3">{currentYear}년 누적 요약</h3>
-        <div className="grid grid-cols-2 gap-2 mb-2">
-          <div className="bg-emerald-50 rounded-lg px-3 py-2">
-            <div className="text-[11px] text-emerald-600">총수입</div>
-            <div className="text-sm font-semibold text-emerald-700">{formatWon(yearStats.income)}</div>
-          </div>
-          <div className="bg-red-50 rounded-lg px-3 py-2">
-            <div className="text-[11px] text-red-500">총지출</div>
-            <div className="text-sm font-semibold text-red-600">{formatWon(yearStats.expense)}</div>
-          </div>
-          <div className="bg-green-50 rounded-lg px-3 py-2">
-            <div className="text-[11px] text-green-600">저축/투자</div>
-            <div className="text-sm font-semibold text-green-700">{formatWon(yearStats.savings)}</div>
-          </div>
-          {settings.loanModeEnabled !== false && (
-            <>
-              <div className="bg-purple-50 rounded-lg px-3 py-2">
-                <div className="text-[11px] text-purple-600">대출 원금상환</div>
-                <div className="text-sm font-semibold text-purple-700">{formatWon(yearStats.principal)}</div>
-              </div>
-              <div className="bg-rose-50 rounded-lg px-3 py-2">
-                <div className="text-[11px] text-rose-600">대출 이자</div>
-                <div className="text-sm font-semibold text-rose-700">{formatWon(yearStats.interest)}</div>
-              </div>
-            </>
-          )}
-          <div className="bg-slate-50 rounded-lg px-3 py-2">
-            <div className="text-[11px] text-slate-500">순증감 (수입-지출)</div>
-            <div className={`text-sm font-semibold ${yearStats.net >= 0 ? "text-emerald-700" : "text-red-600"}`}>{formatWon(yearStats.net)}</div>
-          </div>
-        </div>
-      </div>
 
       {settings.loanModeEnabled !== false && (
       <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
@@ -2109,14 +3539,21 @@ function HouseholdBudget() {
         <ul className="divide-y divide-slate-100 mb-3">
           {loanData.loans
             .filter((l) => showCompletedLoans || !l.completed)
-            .map((l) => (
+            .map((l) => {
+            return (
             <li key={l.id} className={`py-3 border-b border-slate-100 last:border-0 ${l.completed ? "opacity-60" : ""}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className="min-w-0 flex items-center gap-2">
-                  <div>
-                    <div className="text-sm text-slate-800 truncate font-medium flex items-center gap-1.5">
-                      {l.name}
-                      {l.completed && <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full">상환완료</span>}
+                <div className="min-w-0 flex-1 flex items-start gap-1.5">
+                  <Pencil size={11} className="text-slate-300 shrink-0 mt-1" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <input
+                        value={l.name}
+                        onChange={(e) => updateLoanName(l.id, e.target.value)}
+                        disabled={l.completed}
+                        className="min-w-0 flex-1 text-sm text-slate-700 bg-transparent border-0 focus:outline-none disabled:opacity-60"
+                      />
+                      {l.completed && <span className="text-[11px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full shrink-0">상환완료</span>}
                     </div>
                     {l.rate ? <div className="text-xs text-slate-400">이자율 {l.rate}%</div> : null}
                   </div>
@@ -2130,10 +3567,18 @@ function HouseholdBudget() {
                       <button onClick={() => setConfirmDeleteLoanId(null)}
                         className="text-xs px-2 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition">취소</button>
                     </>
+                  ) : confirmCompleteLoanId === l.id ? (
+                    <>
+                      <span className="text-xs text-slate-500">상환완료로 처리할까요?</span>
+                      <button onClick={() => { toggleLoanComplete(l.id); setConfirmCompleteLoanId(null); }}
+                        className="text-xs px-2 py-1 rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition">확인</button>
+                      <button onClick={() => setConfirmCompleteLoanId(null)}
+                        className="text-xs px-2 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition">취소</button>
+                    </>
                   ) : (
                     <>
                       <button
-                        onClick={() => toggleLoanComplete(l.id)}
+                        onClick={() => (l.completed ? toggleLoanComplete(l.id) : setConfirmCompleteLoanId(l.id))}
                         className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition ${
                           l.completed
                             ? "border border-slate-200 text-slate-500 hover:bg-slate-50"
@@ -2173,7 +3618,8 @@ function HouseholdBudget() {
                 </div>
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
 
         {showAddLoanForm && (
@@ -2201,47 +3647,13 @@ function HouseholdBudget() {
       <div className="bg-white rounded-2xl border border-slate-200 p-4">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-slate-700">거래 내역</h3>
-          <div className="relative">
-            <button
-              onClick={() => setShowTxMenu((s) => !s)}
-              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-              aria-label="메뉴"
-            >
-              <MoreVertical size={18} />
-            </button>
-            {showTxMenu && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setShowTxMenu(false)} />
-                <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-20 w-44">
-                  <button
-                    onClick={() => { exportToExcel("month"); setShowTxMenu(false); }}
-                    className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                  >
-                    <Download size={14} /> 이번 달 내려받기
-                  </button>
-                  <button
-                    onClick={() => { exportToExcel("all"); setShowTxMenu(false); }}
-                    className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                  >
-                    <Download size={14} /> 전체 내려받기
-                  </button>
-                  <button
-                    onClick={() => { importInputRef.current && importInputRef.current.click(); setShowTxMenu(false); }}
-                    className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm text-emerald-700 hover:bg-slate-50"
-                  >
-                    <Upload size={14} /> 엑셀 불러오기
-                  </button>
-                </div>
-              </>
-            )}
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleImportExcel}
-              className="hidden"
-            />
-          </div>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleImportExcel}
+            className="hidden"
+          />
         </div>
 
         <button
@@ -2397,12 +3809,12 @@ function HouseholdBudget() {
         ) : (
           <ul className="divide-y divide-slate-100">
             {pagedTx.map((t, i) => {
-              const showMonthHeader = (sortBy === "date_desc" || sortBy === "date_asc") && (i === 0 || pagedTx[i - 1].date.slice(0, 7) !== t.date.slice(0, 7));
+              const showMonthHeader = (sortBy === "date_desc" || sortBy === "date_asc") && (i === 0 || getCycleLabel(pagedTx[i - 1].date, settings.cycleStartDay) !== getCycleLabel(t.date, settings.cycleStartDay));
               return (
               <React.Fragment key={t.id}>
                 {showMonthHeader && (
                   <li className="pt-3 pb-1 first:pt-0">
-                    <span className="text-xs font-semibold text-slate-400">{t.date.slice(0, 7).replace("-", "년 ")}월</span>
+                    <span className="text-xs font-semibold text-slate-400">{formatCycleLabel(getCycleLabel(t.date, settings.cycleStartDay), settings.cycleStartDay)}</span>
                   </li>
                 )}
                 <li
@@ -2534,10 +3946,10 @@ function HouseholdBudget() {
                           </optgroup>
                         ))
                       : incomeGroups.map((g) => (
-                    <optgroup key={g.id} label={g.label}>
-                      {g.categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </optgroup>
-                  ))}
+                          <optgroup key={g.id} label={g.label}>
+                            {g.categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                          </optgroup>
+                        ))}
                   </select>
                 </div>
               </div>
@@ -2645,9 +4057,158 @@ function HouseholdBudget() {
           </div>
         </>
       )}
+        </>
+      )}
+
+      {assetSheetItem && (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setAssetSheetItem(null)} />
+          <div className="fixed left-0 right-0 bottom-0 z-50 bg-white rounded-t-2xl p-4 pb-6 shadow-lg">
+            <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto mb-3" />
+            {assetSheetMode === "menu" && (
+              <>
+                <div className="text-sm text-slate-500 mb-3 text-center truncate">
+                  {assetSheetItem.name} · {formatWon(assetSheetItem.amount)}
+                </div>
+                <button
+                  onClick={() => setAssetSheetMode("edit")}
+                  className="w-full flex items-center justify-center gap-2 py-3 text-sm font-medium text-amber-700 bg-amber-50 rounded-xl mb-2"
+                >
+                  <Pencil size={16} /> 수정하기
+                </button>
+                {assetSheetItem.type !== "loan" && (
+                  <button
+                    onClick={() => setAssetSheetMode("delete")}
+                    className="w-full flex items-center justify-center gap-2 py-3 text-sm font-medium text-red-600 bg-red-50 rounded-xl mb-2"
+                  >
+                    <Trash2 size={16} /> 삭제하기
+                  </button>
+                )}
+                <button onClick={() => setAssetSheetItem(null)} className="w-full py-3 text-sm font-medium text-slate-500">
+                  취소
+                </button>
+              </>
+            )}
+            {assetSheetMode === "edit" && (
+              <>
+                <div className="space-y-3 mb-4">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">이름{assetSheetItem.type === "loan" ? " (홈 화면에서 관리)" : ""}</label>
+                    <input
+                      value={assetSheetNameDraft}
+                      onChange={(e) => setAssetSheetNameDraft(e.target.value)}
+                      disabled={assetSheetItem.type === "loan"}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-3 text-sm disabled:bg-slate-50 disabled:text-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">금액</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoFocus={assetSheetItem.type === "loan"}
+                      value={formatNumberInput(assetSheetAmountDraft)}
+                      onChange={(e) => setAssetSheetAmountDraft(parseNumberInput(e.target.value))}
+                      className="w-full h-10 border border-slate-200 rounded-lg px-3 text-sm text-right"
+                    />
+                  </div>
+                </div>
+                <button onClick={saveAssetSheetEdit} className="w-full py-3 text-sm font-medium text-white bg-slate-900 rounded-xl mb-2">
+                  저장
+                </button>
+                <button onClick={() => setAssetSheetMode("menu")} className="w-full py-3 text-sm font-medium text-slate-500">
+                  뒤로
+                </button>
+              </>
+            )}
+            {assetSheetMode === "delete" && (() => {
+              const laterCount = assetSheetItem.type === "asset" ? countLaterAssetMonths(assetSheetItem.name) : countLaterLiabilityMonths(assetSheetItem.name);
+              return (
+                <>
+                  <p className="text-sm font-medium text-slate-800 text-center mb-1">삭제할까요?</p>
+                  <p className="text-xs text-amber-600 text-center mb-1 px-2 leading-relaxed">
+                    ⚠️ 이 {assetSheetItem.type === "asset" ? "자산" : "부채"}이 이후 모든 달에 기록되어 있다면, 그 기록들도 함께 삭제됩니다.
+                  </p>
+                  {laterCount > 0 ? (
+                    <p className="text-xs text-amber-600 text-center mb-4">(지금 바로 {laterCount}개월 기록에서 삭제돼요)</p>
+                  ) : (
+                    <div className="mb-4" />
+                  )}
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={() => setAssetSheetMode("menu")} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+                      취소
+                    </button>
+                    <button onClick={confirmDeleteAssetSheet} className="flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-medium">
+                      삭제
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </>
+      )}
+
+      {showAssetHelpModal && (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setShowAssetHelpModal(false)} />
+          <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl p-5 shadow-lg max-w-sm mx-auto">
+            <h3 className="text-sm font-semibold text-slate-800 mb-2">자산·부채 입력 사용법</h3>
+            <p className="text-xs text-slate-500 mb-2">자산과 부채를 월 단위로 관리해요. 기록 없는 달은 이전 달 값을 그대로 이어받아 보여줘요 — 누적 관리 방식이에요.</p>
+            <p className="text-xs text-slate-500 mb-4">대출 잔액도 여기서 같이 관리돼요 — 이번 달을 수정하면 홈 화면 대출 카드에도 반영되고, 과거·미래 달은 그 달 기록만 바뀌어요.</p>
+            <button onClick={() => setShowAssetHelpModal(false)} className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium">
+              확인
+            </button>
+          </div>
+        </>
+      )}
+
+      {showCycleModal && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setShowCycleModal(false)} />
+          <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl p-5 shadow-lg max-w-sm mx-auto">
+            <h3 className="text-sm font-semibold text-slate-800 mb-1">정산 시작일 설정</h3>
+            <p className="text-xs text-slate-500 mb-4">
+              월급날에 맞춰서 "이번 달"의 기준을 바꿀 수 있어요. 예: 25일로 설정하면 매달 25일~다음달 24일이 한 사이클이 돼요. 기본값은 1일(1일~말일)이에요.
+            </p>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="text-xs text-slate-500 shrink-0">시작일</label>
+              <select
+                value={cycleDraft}
+                onChange={(e) => setCycleDraft(Number(e.target.value))}
+                className="flex-1 h-10 border border-slate-200 rounded-lg px-2 text-sm bg-white"
+              >
+                {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                  <option key={d} value={d}>{d}일{d === 1 ? " (기본값)" : ""}</option>
+                ))}
+              </select>
+            </div>
+            <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-4">
+              ⚠️ 이미 입력된 거래 데이터는 전혀 안 건드려요. "몇 월로 묶어서 보여줄지"만 바뀌어요.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowCycleModal(false)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  persistSettings({ ...settings, cycleStartDay: cycleDraft });
+                  setSelectedMonth(getCycleLabel(todayStr(), cycleDraft));
+                  setShowCycleModal(false);
+                  setToast("정산 시작일을 저장했어요 (거래는 유지되고 사이클 분류만 다시 계산돼요)");
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium"
+              >
+                저장
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
 
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm px-4 py-2.5 rounded-full shadow-lg flex items-center gap-1.5">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm px-4 py-2.5 rounded-full shadow-lg flex items-center gap-2">
           <span>✅</span>
           <span>{toast}</span>
         </div>
@@ -2687,34 +4248,40 @@ function LoginScreen({ onSignIn, error }) {
 function PinScreen({ isNew, onSubmit, error, onSignOut }) {
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
-  const [step, setStep] = useState("enter"); // isNew일 때: enter -> confirm
+  const [step, setStep] = useState("enter"); // 'enter' | 'confirm' (isNew일 때만 confirm 사용)
 
-  function handleDigit(setFn, current) {
-    return (d) => { if (current.length < 4) setFn(current + d); };
-  }
-
-  function handleSubmit() {
-    if (isNew) {
-      if (step === "enter") {
-        if (pin.length === 4) setStep("confirm");
-        return;
-      }
-      if (confirmPin.length === 4) {
-        if (confirmPin === pin) onSubmit(pin);
+  function handleDigit(d) {
+    if (isNew && step === "enter") {
+      const next = (pin + d).slice(0, 4);
+      setPin(next);
+      if (next.length === 4) setStep("confirm");
+      return;
+    }
+    if (isNew && step === "confirm") {
+      const next = (confirmPin + d).slice(0, 4);
+      setConfirmPin(next);
+      if (next.length === 4) {
+        if (next === pin) onSubmit(pin);
         else { setPin(""); setConfirmPin(""); setStep("enter"); }
       }
       return;
     }
-    if (pin.length === 4) onSubmit(pin);
+    const next = (pin + d).slice(0, 4);
+    setPin(next);
+    if (next.length === 4) onSubmit(next);
   }
 
   const activeValue = isNew && step === "confirm" ? confirmPin : pin;
   const activeSetter = isNew && step === "confirm" ? setConfirmPin : setPin;
 
+  function handleBackspace() {
+    activeSetter(activeValue.slice(0, -1));
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
       <div className="max-w-sm w-full bg-white rounded-2xl border border-slate-200 p-8 text-center shadow-sm">
-        <div className="text-3xl mb-3">🔐</div>
+        <div className="text-3xl mb-3">🔒</div>
         {isNew ? (
           <>
             <h1 className="text-lg font-bold text-slate-900 mb-1">
@@ -2732,62 +4299,47 @@ function PinScreen({ isNew, onSubmit, error, onSignOut }) {
             <p className="text-xs text-slate-500 mb-5">내 데이터를 열어보려면 처음 설정한 4자리 PIN이 필요해요.</p>
           </>
         )}
-
         {error && (
           <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">{error}</p>
         )}
-
         <div className="flex justify-center gap-3 mb-6">
           {[0, 1, 2, 3].map((i) => (
             <div
               key={i}
-              className={`w-10 h-12 rounded-lg border flex items-center justify-center text-lg font-bold ${
-                i < activeValue.length ? "border-slate-800 bg-slate-50" : "border-slate-200"
-              }`}
-            >
-              {i < activeValue.length ? "●" : ""}
-            </div>
+              className={`w-3.5 h-3.5 rounded-full border-2 ${i < activeValue.length ? "bg-slate-900 border-slate-900" : "border-slate-300"}`}
+            />
           ))}
         </div>
-
         <div className="grid grid-cols-3 gap-2 mb-4">
           {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
             <button
               key={d}
-              onClick={() => handleDigit(activeSetter, activeValue)(d)}
-              className="h-12 rounded-xl border border-slate-200 text-lg font-medium text-slate-700 hover:bg-slate-50"
+              onClick={() => handleDigit(d)}
+              className="h-12 rounded-xl border border-slate-200 text-lg font-medium text-slate-700 hover:bg-slate-50 active:bg-slate-100 transition"
             >
               {d}
             </button>
           ))}
+          <div />
           <button
-            onClick={() => activeSetter(activeValue.slice(0, -1))}
-            className="h-12 rounded-xl text-sm text-slate-400 hover:bg-slate-50"
-          >
-            지우기
-          </button>
-          <button
-            onClick={() => handleDigit(activeSetter, activeValue)("0")}
-            className="h-12 rounded-xl border border-slate-200 text-lg font-medium text-slate-700 hover:bg-slate-50"
+            onClick={() => handleDigit("0")}
+            className="h-12 rounded-xl border border-slate-200 text-lg font-medium text-slate-700 hover:bg-slate-50 active:bg-slate-100 transition"
           >
             0
           </button>
           <button
-            onClick={handleSubmit}
-            disabled={activeValue.length !== 4}
-            className="h-12 rounded-xl bg-slate-900 text-white text-sm font-medium disabled:opacity-30"
+            onClick={handleBackspace}
+            className="h-12 rounded-xl border border-slate-200 text-sm font-medium text-slate-500 hover:bg-slate-50 active:bg-slate-100 transition"
           >
-            확인
+            지우기
           </button>
         </div>
-
         {isNew && (
-          <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-3">
+          <p className="text-[11px] text-amber-600 leading-relaxed mb-3">
             ⚠️ 이 PIN을 잊어버리면 데이터를 복구할 수 없어요. 저(개발자)한테 물어봐도 찾아드릴 수 없어요 — 그래야 진짜 안전한 거예요.
           </p>
         )}
-
-        <button onClick={onSignOut} className="text-xs text-slate-400 hover:text-slate-600">
+        <button onClick={onSignOut} className="text-xs text-slate-400 hover:text-slate-600 transition">
           다른 계정으로 로그인
         </button>
       </div>
