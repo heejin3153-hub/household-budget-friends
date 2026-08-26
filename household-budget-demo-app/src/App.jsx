@@ -34,21 +34,13 @@ const UPDATE_HISTORY = [
       {
         emoji: "📊",
         title: "통계 탭 추가",
-        body: `홈 화면 위에 "홈 / 통계" 탭이 생겼어요. 월별 수입·지출 그래프, 카테고리별 지출 추이를 한눈에 볼 수 있어요.`,
-      },
-      {
-        emoji: "💵",
-        title: "홈 화면에 현금흐름표 추가",
-        body: `"이번 달 잔액 계산" 카드에 "요약보기 / 현금흐름표" 버튼이 생겼어요.`,
-        bullets: [
-          "요약보기: 기존이랑 똑같이 간단하게",
-          `현금흐름표: 이번 달 수입을 고정지출 / 자산형성지출(저축·투자, 대출 원금상환) / 변동지출로 나눠서 보여줘요. "마음대로 써도 되는 돈"이 얼마 남았는지도 확인할 수 있어요.`,
-        ],
+        body: `통계 탭에서 월별 수입·지출 그래프, 카테고리별 지출 추이를 한눈에 확인할 수 있어요.`,
       },
       {
         emoji: "💰",
-        title: "자산·부채 관리",
-        body: "예금, 부동산, 대출 같은 자산·부채를 기록하고 순자산 흐름을 확인하는 기능이에요.",
+        title: "통계탭 - 자산·부채 관리",
+        body: "매월 자산·부채를 업데이트하고, 순자산 추이를 확인해보세요.",
+        note: "지출 내역과는 연동되지 않아서, 자산·부채 금액은 직접 입력해주셔야 해요.",
         bullets: [
           "자산·부채를 원하는 이름으로 직접 추가할 수 있어요",
           "대출 잔액도 이 카드에서 같이 관리돼요",
@@ -58,14 +50,23 @@ const UPDATE_HISTORY = [
         ],
       },
       {
+        emoji: "💵",
+        title: "홈탭 - 현금흐름표 추가",
+        body: `"이번 달 잔액 계산" 카드에 "요약보기 / 현금흐름표" 버튼이 생겼어요. 한 달의 현금흐름을 한눈에 파악해보세요.`,
+        bullets: [
+          "요약보기: 기존이랑 똑같이 간단하게",
+          `현금흐름표: 이번 달 수입을 고정지출 / 자산형성지출(저축·투자, 대출 원금상환) / 변동지출로 나눠서 보여줘요. "마음대로 써도 되는 돈"이 얼마 남았는지도 확인할 수 있어요.`,
+        ],
+      },
+      {
         emoji: "📅",
         title: "정산 시작일 설정",
-        body: `월급날 기준으로 "이번 달"을 설정할 수 있어요 (예: 25일~다음달 24일). 헤더 ⋯ 메뉴에서 설정할 수 있어요.`,
+        body: `급여일에 맞게 정산 시작일을 설정할 수 있어요 (예: 25일~다음달 24일). 헤더 ⋯ 메뉴에서 설정할 수 있어요.`,
       },
       {
         emoji: "📥",
         title: "백업 기능 강화",
-        body: `헤더 ⋯ 메뉴 → "엑셀 백업"으로 대출·자산·부채까지 전부 백업/복원할 수 있어요. 파일 선택 창도 더 안정적으로 열리도록 고쳤어요. 혹시 모를 상황에 대비해서 가끔 백업 받아두시는 걸 추천해요!`,
+        body: `헤더 ⋯ 메뉴 → "엑셀 백업"으로 대출·자산·부채 포함 전체 데이터를 엑셀로 내보내고, 불러올 수 있어요. 혹시 모를 상황에 대비해서 가끔 백업 받아두시는 걸 추천해요!`,
       },
     ],
   },
@@ -4227,6 +4228,9 @@ function HouseholdBudget() {
                     {i + 1}. {s.emoji} {s.title}
                   </h4>
                   <p className="text-xs text-slate-600 leading-relaxed">{s.body}</p>
+                  {s.note && (
+                    <p className="text-[11px] text-amber-600 mt-1 leading-relaxed">⚠️ {s.note}</p>
+                  )}
                   {s.bullets && (
                     <ul className="mt-1.5 space-y-1">
                       {s.bullets.map((b, j) => (
@@ -4279,6 +4283,9 @@ function HouseholdBudget() {
                     <div key={i} className="mb-3">
                       <h4 className="text-xs font-semibold text-slate-800 mb-0.5">{s.emoji} {s.title}</h4>
                       <p className="text-xs text-slate-600 leading-relaxed">{s.body}</p>
+                      {s.note && (
+                        <p className="text-[11px] text-amber-600 mt-0.5 leading-relaxed">⚠️ {s.note}</p>
+                      )}
                       {s.bullets && (
                         <ul className="mt-1 space-y-1">
                           {s.bullets.map((b, j) => (
