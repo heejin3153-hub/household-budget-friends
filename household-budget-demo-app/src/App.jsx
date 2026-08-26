@@ -4232,7 +4232,10 @@ function HouseholdBudget() {
       {showWhatsNew && (
         <>
           <div className="fixed inset-0 bg-black/40 z-[70]" />
-          <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[71] bg-white rounded-2xl shadow-lg max-w-sm mx-auto max-h-[85vh] flex flex-col">
+          <div
+            className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[71] bg-white rounded-2xl shadow-lg max-w-sm mx-auto flex flex-col"
+            style={{ maxHeight: Math.round(viewportH * 0.8) + "px" }}
+          >
             <h3 className="text-sm font-semibold text-slate-800 px-5 pt-5">📣 가계부 업데이트 소식!</h3>
             <p className="text-xs text-slate-500 px-5 mt-1 mb-3">새로운 기능이 많이 생겼어요 🙌</p>
             <div className="relative min-h-0 flex-1">
@@ -4240,6 +4243,7 @@ function HouseholdBudget() {
                 ref={whatsNewScrollRef}
                 onScroll={(e) => checkScrollBottom(e.currentTarget, setWhatsNewHasMore)}
                 className="px-5 overflow-y-auto h-full"
+                style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}
               >
                 {UPDATE_HISTORY[0].items.map((s, i) => (
                   <div key={i} className="mb-3.5">
@@ -4293,7 +4297,10 @@ function HouseholdBudget() {
       {showUpdateHistory && (
         <>
           <div className="fixed inset-0 bg-black/40 z-[70]" onClick={() => setShowUpdateHistory(false)} />
-          <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[71] bg-white rounded-2xl shadow-lg max-w-sm mx-auto max-h-[85vh] flex flex-col">
+          <div
+            className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[71] bg-white rounded-2xl shadow-lg max-w-sm mx-auto flex flex-col"
+            style={{ maxHeight: Math.round(viewportH * 0.8) + "px" }}
+          >
             <div className="flex items-center justify-between px-5 pt-5">
               <h3 className="text-sm font-semibold text-slate-800">🔔 업데이트 내역</h3>
               <button onClick={() => setShowUpdateHistory(false)} className="text-slate-400 hover:text-slate-600">
@@ -4305,6 +4312,7 @@ function HouseholdBudget() {
                 ref={historyScrollRef}
                 onScroll={(e) => checkScrollBottom(e.currentTarget, setHistoryHasMore)}
                 className="px-5 pb-5 pt-3 overflow-y-auto h-full"
+                style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}
               >
                 {UPDATE_HISTORY.map((release, ri) => (
                   <div key={release.date} className={ri > 0 ? "mt-4 pt-4 border-t border-slate-100" : ""}>
