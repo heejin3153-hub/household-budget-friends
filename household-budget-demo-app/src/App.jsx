@@ -23,6 +23,16 @@ const BUDGETS_KEY = "household-budget-monthly-budgets";
 const CATEGORY_CONFIG_KEY = "household-budget-category-config";
 const ASSETS_KEY = "household-budget-assets";
 
+// 업데이트 안내 팝업 — 내용 바꿀 때마다 버전 문자열도 같이 바꿔주면 "다시 안 보기" 누른 사람한테도 새로 떠요
+const WHATS_NEW_VERSION = "2026-08-26";
+const WHATS_NEW_DISMISS_KEY = "household-budget-whats-new-dismissed";
+const WHATS_NEW_ITEMS = [
+  "자산·부채를 기록하고 순자산을 확인하는 기능이 새로 생겼어요",
+  "자산·부채 삭제 방식을 하나로 통일하고, 삭제 전 경고 문구를 추가했어요",
+  "같은 이름의 자산·부채는 중복 추가되지 않게 막았어요",
+  "엑셀 백업/불러오기가 더 안정적으로 동작하도록 고쳤어요",
+];
+
 // 🎯 특정 월의 자산 스냅샷을 가져와요
 // 그 달에 직접 기록한 게 없으면, 그 이전 가장 최근 기록을 이어받아요 (누적 방식)
 // 예: 7월에만 기록했으면, 8월/9월/10월에서 조회할 때 다 7월 값을 보여줌
@@ -316,6 +326,9 @@ function HouseholdBudget() {
   const [assetSheetNameDraft, setAssetSheetNameDraft] = useState("");
   const [assetSheetAmountDraft, setAssetSheetAmountDraft] = useState("");
   const [showAssetHelpModal, setShowAssetHelpModal] = useState(false);
+  const [showWhatsNew, setShowWhatsNew] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem(WHATS_NEW_DISMISS_KEY) !== WHATS_NEW_VERSION
+  );
   const [showRecordedMonths, setShowRecordedMonths] = useState(false);
   const [reportMonth, setReportMonth] = useState(todayStr().slice(0, 7));
   const [balanceCardView, setBalanceCardView] = useState("summary"); // "summary" | "detail"
@@ -4149,6 +4162,38 @@ function HouseholdBudget() {
                 </>
               );
             })()}
+          </div>
+        </>
+      )}
+
+      {showWhatsNew && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-[70]" />
+          <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-[71] bg-white rounded-2xl p-5 shadow-lg max-w-sm mx-auto">
+            <h3 className="text-sm font-semibold text-slate-800 mb-3">✨ 업데이트 안내</h3>
+            <ul className="space-y-1.5 mb-3">
+              {WHATS_NEW_ITEMS.map((item, i) => (
+                <li key={i} className="text-xs text-slate-600 leading-relaxed flex gap-1.5">
+                  <span className="text-slate-300">•</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[11px] text-slate-400 mb-4">이 앱은 자주 업데이트돼요. 새로고침을 자주 해주세요!</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowWhatsNew(false)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium"
+              >
+                닫기
+              </button>
+              <button
+                onClick={() => { localStorage.setItem(WHATS_NEW_DISMISS_KEY, WHATS_NEW_VERSION); setShowWhatsNew(false); }}
+                className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium"
+              >
+                다시 안 보기
+              </button>
+            </div>
           </div>
         </>
       )}
