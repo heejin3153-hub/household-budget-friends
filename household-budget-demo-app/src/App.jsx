@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar, ComposedChart } from "recharts";
 import {
   Trash2, Plus, TrendingUp, TrendingDown, Wallet, Loader2,
-  PiggyBank, Target, ChevronDown, ChevronUp, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut,
+  PiggyBank, Target, ChevronDown, ChevronUp, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut, Bell,
 } from "lucide-react";
 import { storageGet, storageSet, setCurrentUid, signInWithGoogle, signOutUser, watchAuthState, setupOrVerifyPin, checkPinExists } from "./firebase";
 import {
@@ -23,37 +23,45 @@ const BUDGETS_KEY = "household-budget-monthly-budgets";
 const CATEGORY_CONFIG_KEY = "household-budget-category-config";
 const ASSETS_KEY = "household-budget-assets";
 
-// 업데이트 안내 팝업 — 내용 바꿀 때마다 버전 문자열도 같이 바꿔주면 "다시 안 보기" 누른 사람한테도 새로 떠요
-const WHATS_NEW_VERSION = "2026-08-26-v3";
-const WHATS_NEW_DISMISS_KEY = "household-budget-whats-new-dismissed";
-const WHATS_NEW_SECTIONS = [
+// 업데이트 내역 — 새 업데이트가 생기면 배열 맨 앞에 새 항목을 추가해주세요 (최신순 유지).
+// 맨 위(UPDATE_HISTORY[0])가 로그인 직후 뜨는 안내 팝업 내용이 되고,
+// 헤더 메뉴의 "업데이트 내역"에서는 전체가 날짜별로 다 보여요.
+const UPDATE_HISTORY = [
   {
-    emoji: "📊",
-    title: "통계 탭 추가",
-    desc: "통계 탭에서 월별 그래프·카테고리별 추이를 확인할 수 있어요.",
-  },
-  {
-    emoji: "💰",
-    title: "통계탭 - 자산·부채 관리",
-    desc: "매월 자산·부채를 업데이트하고, 순자산 추이를 확인해보세요.",
-    note: "지출 내역과는 연동되지 않아서, 자산·부채 금액은 직접 입력해주셔야 해요.",
-  },
-  {
-    emoji: "💵",
-    title: "홈탭 - 현금흐름표 추가",
-    desc: "요약보기/현금흐름표 토글이 생겼어요. 한 달의 현금흐름을 한눈에 파악해보세요.",
-  },
-  {
-    emoji: "📅",
-    title: "정산 시작일 설정",
-    desc: "급여일에 맞게 정산 시작일을 설정할 수 있어요.",
-  },
-  {
-    emoji: "📥",
-    title: "백업 기능 강화",
-    desc: "대출·자산·부채 포함 전체 데이터를 엑셀로 내보내고, 불러올 수 있어요.",
+    date: "2026-08-26",
+    items: [
+      {
+        emoji: "📊",
+        title: "통계 탭 추가",
+        desc: "통계 탭에서 월별 그래프·카테고리별 추이를 확인할 수 있어요.",
+      },
+      {
+        emoji: "💰",
+        title: "통계탭 - 자산·부채 관리",
+        desc: "매월 자산·부채를 업데이트하고, 순자산 추이를 확인해보세요.",
+        note: "지출 내역과는 연동되지 않아서, 자산·부채 금액은 직접 입력해주셔야 해요.",
+      },
+      {
+        emoji: "💵",
+        title: "홈탭 - 현금흐름표 추가",
+        desc: "요약보기/현금흐름표 토글이 생겼어요. 한 달의 현금흐름을 한눈에 파악해보세요.",
+      },
+      {
+        emoji: "📅",
+        title: "정산 시작일 설정",
+        desc: "급여일에 맞게 정산 시작일을 설정할 수 있어요.",
+      },
+      {
+        emoji: "📥",
+        title: "백업 기능 강화",
+        desc: "대출·자산·부채 포함 전체 데이터를 엑셀로 내보내고, 불러올 수 있어요.",
+      },
+    ],
   },
 ];
+// "다시 안 보기"는 최신 업데이트 날짜 기준으로 기억돼요 — 새 업데이트가 생기면 자동으로 다시 떠요
+const WHATS_NEW_VERSION = UPDATE_HISTORY[0].date;
+const WHATS_NEW_DISMISS_KEY = "household-budget-whats-new-dismissed";
 
 // 🎯 특정 월의 자산 스냅샷을 가져와요
 // 그 달에 직접 기록한 게 없으면, 그 이전 가장 최근 기록을 이어받아요 (누적 방식)
@@ -351,6 +359,7 @@ function HouseholdBudget() {
   const [showWhatsNew, setShowWhatsNew] = useState(
     () => typeof window !== "undefined" && localStorage.getItem(WHATS_NEW_DISMISS_KEY) !== WHATS_NEW_VERSION
   );
+  const [showUpdateHistory, setShowUpdateHistory] = useState(false);
   const [showRecordedMonths, setShowRecordedMonths] = useState(false);
   const [reportMonth, setReportMonth] = useState(todayStr().slice(0, 7));
   const [balanceCardView, setBalanceCardView] = useState("summary"); // "summary" | "detail"
@@ -1860,6 +1869,12 @@ function HouseholdBudget() {
                     className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   >
                     정산 시작일 설정
+                  </button>
+                  <button
+                    onClick={() => { setShowUpdateHistory(true); setShowHeaderMenu(false); }}
+                    className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    <Bell size={14} /> 업데이트 내역
                   </button>
                   <div className="border-t border-slate-100 my-1" />
                   <button
@@ -4195,7 +4210,7 @@ function HouseholdBudget() {
             <h3 className="text-sm font-semibold text-slate-800 px-5 pt-5">📣 가계부 업데이트 소식!</h3>
             <p className="text-xs text-slate-500 px-5 mt-1 mb-3">새로운 기능이 많이 생겼어요 🙌</p>
             <div className="px-5 overflow-y-auto flex-1">
-              {WHATS_NEW_SECTIONS.map((s, i) => (
+              {UPDATE_HISTORY[0].items.map((s, i) => (
                 <div key={i} className="mb-2.5">
                   <p className="text-xs text-slate-700 leading-relaxed">
                     <span className="font-semibold text-slate-800">{i + 1}. {s.emoji} {s.title}</span> — {s.desc}
@@ -4222,6 +4237,37 @@ function HouseholdBudget() {
                   다시 안 보기
                 </button>
               </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {showUpdateHistory && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-[70]" onClick={() => setShowUpdateHistory(false)} />
+          <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[71] bg-white rounded-2xl shadow-lg max-w-sm mx-auto max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 pt-5">
+              <h3 className="text-sm font-semibold text-slate-800">🔔 업데이트 내역</h3>
+              <button onClick={() => setShowUpdateHistory(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-5 pb-5 pt-3 overflow-y-auto flex-1">
+              {UPDATE_HISTORY.map((release, ri) => (
+                <div key={release.date} className={ri > 0 ? "mt-4 pt-4 border-t border-slate-100" : ""}>
+                  <p className="text-xs font-semibold text-slate-400 mb-2">{release.date}</p>
+                  {release.items.map((s, i) => (
+                    <div key={i} className="mb-2.5">
+                      <p className="text-xs text-slate-700 leading-relaxed">
+                        <span className="font-semibold text-slate-800">{s.emoji} {s.title}</span> — {s.desc}
+                      </p>
+                      {s.note && (
+                        <p className="text-[11px] text-amber-600 mt-0.5 pl-4 leading-relaxed">⚠️ {s.note}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ))}
             </div>
           </div>
         </>
