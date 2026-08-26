@@ -386,6 +386,22 @@ function HouseholdBudget() {
   useEffect(() => {
     if (showUpdateHistory) checkScrollBottom(historyScrollRef.current, setHistoryHasMore);
   }, [showUpdateHistory]);
+  // 팝업/업데이트 내역이 떠있는 동안, 뒤쪽 화면(배경)이 스크롤되지 않게 막아요 (아이폰 사파리 대응)
+  useEffect(() => {
+    if (!showWhatsNew && !showUpdateHistory) return;
+    const scrollY = window.scrollY;
+    const { style } = document.body;
+    const prevPosition = style.position, prevTop = style.top, prevWidth = style.width;
+    style.position = "fixed";
+    style.top = `-${scrollY}px`;
+    style.width = "100%";
+    return () => {
+      style.position = prevPosition;
+      style.top = prevTop;
+      style.width = prevWidth;
+      window.scrollTo(0, scrollY);
+    };
+  }, [showWhatsNew, showUpdateHistory]);
   const [showRecordedMonths, setShowRecordedMonths] = useState(false);
   const [reportMonth, setReportMonth] = useState(todayStr().slice(0, 7));
   const [balanceCardView, setBalanceCardView] = useState("summary"); // "summary" | "detail"
