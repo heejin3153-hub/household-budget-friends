@@ -3656,7 +3656,7 @@ function HouseholdBudget() {
             type="file"
             accept=".xlsx,.xls"
             onChange={handleImportExcel}
-            className="hidden"
+            className="sr-only"
           />
         </div>
 
