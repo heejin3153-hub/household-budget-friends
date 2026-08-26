@@ -386,22 +386,6 @@ function HouseholdBudget() {
   useEffect(() => {
     if (showUpdateHistory) checkScrollBottom(historyScrollRef.current, setHistoryHasMore);
   }, [showUpdateHistory]);
-  // 팝업/업데이트 내역이 떠있는 동안, 뒤쪽 화면(배경)이 스크롤되지 않게 막아요 (아이폰 사파리 대응)
-  useEffect(() => {
-    if (!showWhatsNew && !showUpdateHistory) return;
-    const scrollY = window.scrollY;
-    const { style } = document.body;
-    const prevPosition = style.position, prevTop = style.top, prevWidth = style.width;
-    style.position = "fixed";
-    style.top = `-${scrollY}px`;
-    style.width = "100%";
-    return () => {
-      style.position = prevPosition;
-      style.top = prevTop;
-      style.width = prevWidth;
-      window.scrollTo(0, scrollY);
-    };
-  }, [showWhatsNew, showUpdateHistory]);
   const [showRecordedMonths, setShowRecordedMonths] = useState(false);
   const [reportMonth, setReportMonth] = useState(todayStr().slice(0, 7));
   const [balanceCardView, setBalanceCardView] = useState("summary"); // "summary" | "detail"
@@ -4246,14 +4230,13 @@ function HouseholdBudget() {
       )}
 
       {showWhatsNew && (
-        <>
-          <div className="fixed inset-0 bg-black/40 z-[70]" />
-          <div
-            className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[71] bg-white rounded-2xl shadow-lg max-w-sm mx-auto flex flex-col"
-            style={{ maxHeight: Math.round(viewportH * 0.8) + "px" }}
-          >
-            <h3 className="text-sm font-semibold text-slate-800 px-5 pt-5">📣 가계부 업데이트 소식!</h3>
-            <p className="text-xs text-slate-500 px-5 mt-1 mb-3">새로운 기능이 많이 생겼어요 🙌</p>
+        <div
+          className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4"
+          onTouchMove={(e) => { if (e.target === e.currentTarget) e.preventDefault(); }}
+        >
+          <div className="bg-white rounded-2xl shadow-lg max-w-sm w-full max-h-full flex flex-col overflow-hidden">
+            <h3 className="text-sm font-semibold text-slate-800 px-5 pt-5 shrink-0">📣 가계부 업데이트 소식!</h3>
+            <p className="text-xs text-slate-500 px-5 mt-1 mb-3 shrink-0">새로운 기능이 많이 생겼어요 🙌</p>
             <div className="relative min-h-0 flex-1">
               <div
                 ref={whatsNewScrollRef}
@@ -4289,7 +4272,7 @@ function HouseholdBudget() {
                 </div>
               )}
             </div>
-            <div className="px-5 pb-5 pt-2">
+            <div className="px-5 pb-5 pt-2 shrink-0">
               <p className="text-[11px] text-slate-400 mb-3">🔄 이 앱은 자주 업데이트돼요. 새로고침을 자주 해주세요!</p>
               <div className="flex gap-2">
                 <button
@@ -4307,17 +4290,17 @@ function HouseholdBudget() {
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {showUpdateHistory && (
-        <>
-          <div className="fixed inset-0 bg-black/40 z-[70]" onClick={() => setShowUpdateHistory(false)} />
-          <div
-            className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[71] bg-white rounded-2xl shadow-lg max-w-sm mx-auto flex flex-col"
-            style={{ maxHeight: Math.round(viewportH * 0.8) + "px" }}
-          >
-            <div className="flex items-center justify-between px-5 pt-5">
+        <div
+          className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowUpdateHistory(false); }}
+          onTouchMove={(e) => { if (e.target === e.currentTarget) e.preventDefault(); }}
+        >
+          <div className="bg-white rounded-2xl shadow-lg max-w-sm w-full max-h-full flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-5 pt-5 shrink-0">
               <h3 className="text-sm font-semibold text-slate-800">🔔 업데이트 내역</h3>
               <button onClick={() => setShowUpdateHistory(false)} className="text-slate-400 hover:text-slate-600">
                 <X size={18} />
@@ -4362,7 +4345,7 @@ function HouseholdBudget() {
               )}
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {showAssetHelpModal && (
