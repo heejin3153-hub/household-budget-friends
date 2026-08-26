@@ -372,6 +372,20 @@ function HouseholdBudget() {
     () => typeof window !== "undefined" && localStorage.getItem(WHATS_NEW_DISMISS_KEY) !== WHATS_NEW_VERSION
   );
   const [showUpdateHistory, setShowUpdateHistory] = useState(false);
+  const [whatsNewHasMore, setWhatsNewHasMore] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const whatsNewScrollRef = useRef(null);
+  const historyScrollRef = useRef(null);
+  function checkScrollBottom(el, setHasMore) {
+    if (!el) return;
+    setHasMore(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+  }
+  useEffect(() => {
+    if (showWhatsNew) checkScrollBottom(whatsNewScrollRef.current, setWhatsNewHasMore);
+  }, [showWhatsNew]);
+  useEffect(() => {
+    if (showUpdateHistory) checkScrollBottom(historyScrollRef.current, setHistoryHasMore);
+  }, [showUpdateHistory]);
   const [showRecordedMonths, setShowRecordedMonths] = useState(false);
   const [reportMonth, setReportMonth] = useState(todayStr().slice(0, 7));
   const [balanceCardView, setBalanceCardView] = useState("summary"); // "summary" | "detail"
@@ -4221,28 +4235,39 @@ function HouseholdBudget() {
           <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[71] bg-white rounded-2xl shadow-lg max-w-sm mx-auto max-h-[85vh] flex flex-col">
             <h3 className="text-sm font-semibold text-slate-800 px-5 pt-5">📣 가계부 업데이트 소식!</h3>
             <p className="text-xs text-slate-500 px-5 mt-1 mb-3">새로운 기능이 많이 생겼어요 🙌</p>
-            <div className="px-5 overflow-y-auto flex-1">
-              {UPDATE_HISTORY[0].items.map((s, i) => (
-                <div key={i} className="mb-3.5">
-                  <h4 className="text-sm font-semibold text-slate-800 mb-1">
-                    {i + 1}. {s.emoji} {s.title}
-                  </h4>
-                  <p className="text-xs text-slate-600 leading-relaxed">{s.body}</p>
-                  {s.note && (
-                    <p className="text-[11px] text-amber-600 mt-1 leading-relaxed">⚠️ {s.note}</p>
-                  )}
-                  {s.bullets && (
-                    <ul className="mt-1.5 space-y-1">
-                      {s.bullets.map((b, j) => (
-                        <li key={j} className="text-xs text-slate-600 leading-relaxed flex gap-1.5">
-                          <span className="text-slate-300 shrink-0">•</span>
-                          <span>{b}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+            <div className="relative min-h-0 flex-1">
+              <div
+                ref={whatsNewScrollRef}
+                onScroll={(e) => checkScrollBottom(e.currentTarget, setWhatsNewHasMore)}
+                className="px-5 overflow-y-auto h-full"
+              >
+                {UPDATE_HISTORY[0].items.map((s, i) => (
+                  <div key={i} className="mb-3.5">
+                    <h4 className="text-sm font-semibold text-slate-800 mb-1">
+                      {i + 1}. {s.emoji} {s.title}
+                    </h4>
+                    <p className="text-xs text-slate-600 leading-relaxed">{s.body}</p>
+                    {s.note && (
+                      <p className="text-[11px] text-amber-600 mt-1 leading-relaxed">⚠️ {s.note}</p>
+                    )}
+                    {s.bullets && (
+                      <ul className="mt-1.5 space-y-1">
+                        {s.bullets.map((b, j) => (
+                          <li key={j} className="text-xs text-slate-600 leading-relaxed flex gap-1.5">
+                            <span className="text-slate-300 shrink-0">•</span>
+                            <span>{b}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {whatsNewHasMore && (
+                <div className="pointer-events-none absolute bottom-0 inset-x-0 h-10 bg-gradient-to-t from-white to-transparent flex items-end justify-center pb-0.5">
+                  <ChevronDown size={16} className="text-slate-300 animate-bounce" />
                 </div>
-              ))}
+              )}
             </div>
             <div className="px-5 pb-5 pt-2">
               <p className="text-[11px] text-slate-400 mb-3">🔄 이 앱은 자주 업데이트돼요. 새로고침을 자주 해주세요!</p>
@@ -4275,31 +4300,42 @@ function HouseholdBudget() {
                 <X size={18} />
               </button>
             </div>
-            <div className="px-5 pb-5 pt-3 overflow-y-auto flex-1">
-              {UPDATE_HISTORY.map((release, ri) => (
-                <div key={release.date} className={ri > 0 ? "mt-4 pt-4 border-t border-slate-100" : ""}>
-                  <p className="text-xs font-semibold text-slate-400 mb-2">{release.date}</p>
-                  {release.items.map((s, i) => (
-                    <div key={i} className="mb-3">
-                      <h4 className="text-xs font-semibold text-slate-800 mb-0.5">{s.emoji} {s.title}</h4>
-                      <p className="text-xs text-slate-600 leading-relaxed">{s.body}</p>
-                      {s.note && (
-                        <p className="text-[11px] text-amber-600 mt-0.5 leading-relaxed">⚠️ {s.note}</p>
-                      )}
-                      {s.bullets && (
-                        <ul className="mt-1 space-y-1">
-                          {s.bullets.map((b, j) => (
-                            <li key={j} className="text-xs text-slate-600 leading-relaxed flex gap-1.5">
-                              <span className="text-slate-300 shrink-0">•</span>
-                              <span>{b}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  ))}
+            <div className="relative min-h-0 flex-1">
+              <div
+                ref={historyScrollRef}
+                onScroll={(e) => checkScrollBottom(e.currentTarget, setHistoryHasMore)}
+                className="px-5 pb-5 pt-3 overflow-y-auto h-full"
+              >
+                {UPDATE_HISTORY.map((release, ri) => (
+                  <div key={release.date} className={ri > 0 ? "mt-4 pt-4 border-t border-slate-100" : ""}>
+                    <p className="text-xs font-semibold text-slate-400 mb-2">{release.date}</p>
+                    {release.items.map((s, i) => (
+                      <div key={i} className="mb-3">
+                        <h4 className="text-xs font-semibold text-slate-800 mb-0.5">{s.emoji} {s.title}</h4>
+                        <p className="text-xs text-slate-600 leading-relaxed">{s.body}</p>
+                        {s.note && (
+                          <p className="text-[11px] text-amber-600 mt-0.5 leading-relaxed">⚠️ {s.note}</p>
+                        )}
+                        {s.bullets && (
+                          <ul className="mt-1 space-y-1">
+                            {s.bullets.map((b, j) => (
+                              <li key={j} className="text-xs text-slate-600 leading-relaxed flex gap-1.5">
+                                <span className="text-slate-300 shrink-0">•</span>
+                                <span>{b}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              {historyHasMore && (
+                <div className="pointer-events-none absolute bottom-0 inset-x-0 h-10 bg-gradient-to-t from-white to-transparent flex items-end justify-center pb-0.5">
+                  <ChevronDown size={16} className="text-slate-300 animate-bounce" />
                 </div>
-              ))}
+              )}
             </div>
           </div>
         </>
