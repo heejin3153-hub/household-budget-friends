@@ -225,6 +225,10 @@ function HouseholdBudget() {
   }, [toast, toastType]);
   const [lastFailedSave, setLastFailedSave] = useState(null);
 
+  useEffect(() => {
+    import("xlsx"); // 엑셀 백업/불러오기 기능을 미리 로드해서, 처음 눌러도 바로 동작하게 해요
+  }, []);
+
   // 아래 값들은 groups/incomeCategories state로부터 매 렌더마다 계산돼요 (카테고리 관리에서 직접 수정 가능)
   const LIVING_CATEGORIES = groups.find((g) => g.id === "living")?.categories || [];
   const ALLOWANCE_CATEGORIES = groups.find((g) => g.id === "allowance")?.categories || [];
