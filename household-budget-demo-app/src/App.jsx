@@ -265,8 +265,8 @@ function HouseholdBudget() {
   const [newRecurCategory, setNewRecurCategory] = useState(DEFAULT_GROUPS.find((g) => g.id === "fixed").categories[0]);
   const [newRecurAmount, setNewRecurAmount] = useState("");
   const [newRecurDay, setNewRecurDay] = useState("1");
-  const [confirmDeleteRecurId, setConfirmDeleteRecurId] = useState(null);
   const [editingRecurId, setEditingRecurId] = useState(null);
+  const [confirmDeleteInRecurSheet, setConfirmDeleteInRecurSheet] = useState(false);
   const [recurDraftName, setRecurDraftName] = useState("");
   const [recurDraftCategory, setRecurDraftCategory] = useState("");
   const [recurDraftAmount, setRecurDraftAmount] = useState("");
@@ -277,6 +277,7 @@ function HouseholdBudget() {
     setRecurDraftCategory(item.category);
     setRecurDraftAmount(String(item.amount || 0));
     setRecurDraftDay(item.day || 1);
+    setConfirmDeleteInRecurSheet(false);
   }
   function saveRecurEditSheet() {
     const name = recurDraftName.trim();
@@ -286,6 +287,10 @@ function HouseholdBudget() {
     );
     persistRecurring(next);
     setEditingRecurId(null);
+  }
+  function closeRecurEditSheet() {
+    setEditingRecurId(null);
+    setConfirmDeleteInRecurSheet(false);
   }
   const [showInstallment, setShowInstallment] = useState(false);
   const [instName, setInstName] = useState("");
@@ -2677,18 +2682,6 @@ function HouseholdBudget() {
                           {item.category} · 매월 {item.day || 1}{(item.day || 1) === 28 ? "(말일)" : ""}일
                         </div>
                       </button>
-                      {confirmDeleteRecurId === item.id ? (
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button onClick={() => { deleteRecurringItem(item.id); setConfirmDeleteRecurId(null); }}
-                            className="text-[11px] px-2 py-1 rounded-lg bg-red-500 text-white">삭제</button>
-                          <button onClick={() => setConfirmDeleteRecurId(null)}
-                            className="text-[11px] px-2 py-1 rounded-lg border border-slate-200 text-slate-600">취소</button>
-                        </div>
-                      ) : (
-                        <button onClick={() => setConfirmDeleteRecurId(item.id)} className="text-slate-300 hover:text-red-500 shrink-0" aria-label="삭제">
-                          <Trash2 size={14} />
-                        </button>
-                      )}
                     </li>
                   );
                 })}
@@ -4437,73 +4430,109 @@ function HouseholdBudget() {
         </>
       )}
 
-      {editingRecurId && (
-        <>
-          <div className="fixed inset-0 bg-black/40 z-[60]" onClick={() => setEditingRecurId(null)} />
-          <div className="fixed inset-x-3 top-1/2 -translate-y-1/2 z-[61] bg-white rounded-2xl shadow-lg max-w-md mx-auto max-h-[85vh] overflow-y-auto">
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-slate-800">정기지출 수정</h3>
-                <button onClick={() => setEditingRecurId(null)} className="text-slate-400 hover:text-slate-700">
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="mb-3">
-                <label className="text-xs text-slate-500 block mb-1">이름</label>
-                <input
-                  autoFocus
-                  value={recurDraftName}
-                  onChange={(e) => setRecurDraftName(e.target.value)}
-                  className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div>
-                  <label className="text-xs text-slate-500 block mb-1">카테고리</label>
-                  <select
-                    value={recurDraftCategory}
-                    onChange={(e) => setRecurDraftCategory(e.target.value)}
-                    className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                  >
-                    {FIXED_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-slate-500 block mb-1">매월 며칠</label>
-                  <select
-                    value={recurDraftDay}
-                    onChange={(e) => setRecurDraftDay(Number(e.target.value))}
-                    className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                  >
-                    {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-                      <option key={d} value={d}>{d}{d === 28 ? "(말일)" : ""}일</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="mb-4">
-                <label className="text-xs text-slate-500 block mb-1">금액</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={formatNumberInput(recurDraftAmount)}
-                  onChange={(e) => setRecurDraftAmount(parseNumberInput(e.target.value))}
-                  onKeyDown={(e) => { if (e.key === "Enter") saveRecurEditSheet(); }}
-                  className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm text-right focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                />
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setEditingRecurId(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
-                  취소
-                </button>
-                <button onClick={saveRecurEditSheet} className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium">
-                  저장
-                </button>
+      {editingRecurId && (() => {
+        const editingItem = recurringItems.find((r) => r.id === editingRecurId);
+        const relatedTxCount = editingItem
+          ? transactions.filter((t) => t.type === "expense" && t.category === editingItem.category && t.memo === editingItem.name).length
+          : 0;
+        return (
+          <>
+            <div className="fixed inset-0 bg-black/40 z-[60]" onClick={closeRecurEditSheet} />
+            <div className="fixed inset-x-3 top-1/2 -translate-y-1/2 z-[61] bg-white rounded-2xl shadow-lg max-w-md mx-auto max-h-[85vh] overflow-y-auto">
+              <div className="p-4">
+                {confirmDeleteInRecurSheet ? (
+                  <>
+                    <h3 className="text-sm font-semibold text-slate-800 text-center mb-1">삭제할까요?</h3>
+                    <p className="text-sm text-slate-600 text-center mb-3">{editingItem?.name}</p>
+                    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-4 leading-relaxed">
+                      {relatedTxCount > 0
+                        ? `⚠️ 이 항목으로 지금까지 기록된 거래가 ${relatedTxCount}건 있어요. 그 거래 기록은 삭제되지 않고 그대로 남고, 체크리스트에서만 없어져요.`
+                        : "⚠️ 아직 이 항목으로 기록된 거래는 없어요. 체크리스트에서 없어져요."}
+                    </p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setConfirmDeleteInRecurSheet(false)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+                        취소
+                      </button>
+                      <button
+                        onClick={() => { deleteRecurringItem(editingRecurId); closeRecurEditSheet(); }}
+                        className="flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-medium"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold text-slate-800">정기지출 수정</h3>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setConfirmDeleteInRecurSheet(true)} className="text-slate-300 hover:text-red-500" aria-label="삭제">
+                          <Trash2 size={16} />
+                        </button>
+                        <button onClick={closeRecurEditSheet} className="text-slate-400 hover:text-slate-700">
+                          <X size={18} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mb-3">
+                      <label className="text-xs text-slate-500 block mb-1">이름</label>
+                      <input
+                        autoFocus
+                        value={recurDraftName}
+                        onChange={(e) => setRecurDraftName(e.target.value)}
+                        className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="text-xs text-slate-500 block mb-1">카테고리</label>
+                        <select
+                          value={recurDraftCategory}
+                          onChange={(e) => setRecurDraftCategory(e.target.value)}
+                          className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        >
+                          {FIXED_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-500 block mb-1">매월 며칠</label>
+                        <select
+                          value={recurDraftDay}
+                          onChange={(e) => setRecurDraftDay(Number(e.target.value))}
+                          className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        >
+                          {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                            <option key={d} value={d}>{d}{d === 28 ? "(말일)" : ""}일</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="mb-4">
+                      <label className="text-xs text-slate-500 block mb-1">금액</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={formatNumberInput(recurDraftAmount)}
+                        onChange={(e) => setRecurDraftAmount(parseNumberInput(e.target.value))}
+                        onKeyDown={(e) => { if (e.key === "Enter") saveRecurEditSheet(); }}
+                        className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm text-right focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={closeRecurEditSheet} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+                        취소
+                      </button>
+                      <button onClick={saveRecurEditSheet} className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium">
+                        저장
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
-          </div>
-        </>
-      )}
+          </>
+        );
+      })()}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm px-4 py-2.5 rounded-full shadow-lg flex items-center gap-2">
