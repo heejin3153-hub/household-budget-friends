@@ -2341,6 +2341,10 @@ function HouseholdBudget() {
                 {showRecordedMonths ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
               </button>
               {showRecordedMonths && (
+              <>
+              <p className="text-[11px] text-slate-400 mb-2 leading-relaxed">
+                한 달을 삭제하면 그 달에 저장돼있던 기록(그때 새로 넣은 항목·이월받아 보이던 항목 구분 없이 전부)이 통째로 없어져요. 다른 달의 기록은 그대로 남고, 삭제한 달은 다시 그 이전 가장 최근 기록을 이어받아 보여줘요.
+              </p>
               <ul className="divide-y divide-slate-50 max-h-40 overflow-y-auto">
                 {Object.keys(assetData.monthlySnapshots).sort().reverse().map((month) => {
                   const snap = assetData.monthlySnapshots[month];
@@ -2364,7 +2368,7 @@ function HouseholdBudget() {
                           <button onClick={() => setConfirmDeleteSnapshotMonth(null)} className="text-[11px] px-1.5 py-0.5 rounded border border-slate-200 text-slate-600">취소</button>
                         </span>
                       ) : (
-                        <button onClick={() => { setConfirmDeleteSnapshotMonth(month); setToast("이후 달의 이월에 영향이 있어요"); }} className="text-slate-300 hover:text-red-500 shrink-0 ml-2" aria-label="기록 삭제">
+                        <button onClick={() => { setConfirmDeleteSnapshotMonth(month); setToast("삭제하면 이 달 기록이 없어지고, 이전 기록을 이어받아요"); }} className="text-slate-300 hover:text-red-500 shrink-0 ml-2" aria-label="기록 삭제">
                           <Trash2 size={12} />
                         </button>
                       )}
@@ -2372,6 +2376,7 @@ function HouseholdBudget() {
                   );
                 })}
               </ul>
+              </>
               )}
             </div>
           )}
