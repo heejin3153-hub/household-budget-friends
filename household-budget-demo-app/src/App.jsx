@@ -175,8 +175,9 @@ function makeBarValueLabel(dataArr, key, otherKey) {
         const heightDiff = Math.abs(height - otherHeight);
         const MIN_GAP = 14; // 라벨 두 줄이 안 겹치는 데 필요한 최소 픽셀 간격
         if (heightDiff < MIN_GAP && value <= otherValue) {
-          // 내가 더 짧거나 같은 막대일 때만 그만큼 위로 띄워요 (둘 다 띄우면 다시 겹치니 한쪽만)
-          lift = MIN_GAP - heightDiff;
+          // 내가 더 짧거나 같은 막대일 때만, 상대 라벨보다 확실히 MIN_GAP만큼 위로 올라가게 띄워요
+          // (둘 다 띄우면 다시 겹치니 한쪽만 올림 — 자연 간격(heightDiff)을 넘어서 MIN_GAP만큼 더 가야 해요)
+          lift = heightDiff + MIN_GAP;
         }
       }
     }
