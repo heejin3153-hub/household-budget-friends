@@ -266,7 +266,8 @@ function HouseholdBudget() {
   const [newRecurAmount, setNewRecurAmount] = useState("");
   const [newRecurDay, setNewRecurDay] = useState("1");
   const [confirmDeleteRecurId, setConfirmDeleteRecurId] = useState(null);
-  const [recurPickerFor, setRecurPickerFor] = useState(null); // { id, field: "category" | "day" } | null
+  const [recurPickerFor, setRecurPickerFor] = useState(null); // { id, field: "name" | "amount" | "category" | "day" } | null
+  const [recurFieldDraft, setRecurFieldDraft] = useState("");
   const [showInstallment, setShowInstallment] = useState(false);
   const [instName, setInstName] = useState("");
   const [instTotal, setInstTotal] = useState("");
@@ -2649,11 +2650,13 @@ function HouseholdBudget() {
                         <CheckCircle2 size={13} />
                       </button>
                       <div className="flex-1 min-w-0">
-                        <input
-                          value={item.name}
-                          onChange={(e) => updateRecurringField(item.id, "name", e.target.value)}
-                          className={`w-full text-[13px] bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-emerald-300 rounded px-0.5 ${logged ? "text-slate-400 line-through" : "text-slate-800"}`}
-                        />
+                        <button
+                          type="button"
+                          onClick={() => { setRecurPickerFor({ id: item.id, field: "name" }); setRecurFieldDraft(item.name); }}
+                          className={`w-full text-left text-[13px] truncate px-0.5 ${logged ? "text-slate-400 line-through" : "text-slate-800"}`}
+                        >
+                          {item.name}
+                        </button>
                         <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 mt-0.5 text-[10px] text-slate-400">
                           <button
                             type="button"
@@ -2663,13 +2666,13 @@ function HouseholdBudget() {
                             {item.category}
                           </button>
                           <span className="text-slate-300">·</span>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={formatNumberInput(item.amount)}
-                            onChange={(e) => updateRecurringField(item.id, "amount", Number(parseNumberInput(e.target.value)) || 0)}
-                            className="text-[10px] text-slate-400 bg-transparent border-0 focus:outline-none w-20"
-                          />
+                          <button
+                            type="button"
+                            onClick={() => { setRecurPickerFor({ id: item.id, field: "amount" }); setRecurFieldDraft(formatNumberInput(item.amount)); }}
+                            className="hover:text-slate-600"
+                          >
+                            {formatNumberInput(item.amount)}
+                          </button>
                           <span className="text-slate-300">·</span>
                           <span className="shrink-0">매월</span>
                           <button
@@ -4444,44 +4447,76 @@ function HouseholdBudget() {
       {recurPickerFor && (() => {
         const pickedItem = recurringItems.find((r) => r.id === recurPickerFor.id);
         if (!pickedItem) return null;
+        const field = recurPickerFor.field;
+        const isChoice = field === "category" || field === "day";
+        const title = field === "category" ? "카테고리 선택" : field === "day" ? "매월 며칠" : field === "name" ? "이름 수정" : "금액 수정";
+        function saveRecurDraft() {
+          if (field === "name") {
+            const v = recurFieldDraft.trim();
+            if (v) updateRecurringField(pickedItem.id, "name", v);
+          } else if (field === "amount") {
+            updateRecurringField(pickedItem.id, "amount", Number(recurFieldDraft) || 0);
+          }
+          setRecurPickerFor(null);
+        }
         return (
           <>
             <div className="fixed inset-0 bg-black/40 z-[60]" onClick={() => setRecurPickerFor(null)} />
             <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-[61] bg-white rounded-2xl shadow-lg max-w-sm mx-auto p-4 max-h-[70vh] flex flex-col">
-              <h4 className="text-sm font-semibold text-slate-800 mb-3 shrink-0">
-                {recurPickerFor.field === "category" ? "카테고리 선택" : "매월 며칠"}
-              </h4>
-              <div className="overflow-y-auto">
-                {recurPickerFor.field === "category" ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {FIXED_CATEGORIES.map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => { updateRecurringField(pickedItem.id, "category", c); setRecurPickerFor(null); }}
-                        className={`py-2 rounded-lg border text-sm transition ${
-                          c === pickedItem.category ? "border-emerald-500 bg-emerald-50 text-emerald-700 font-medium" : "border-slate-200 text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        {c}
-                      </button>
-                    ))}
+              <h4 className="text-sm font-semibold text-slate-800 mb-3 shrink-0">{title}</h4>
+              {isChoice ? (
+                <div className="overflow-y-auto">
+                  {field === "category" ? (
+                    <div className="grid grid-cols-3 gap-2">
+                      {FIXED_CATEGORIES.map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => { updateRecurringField(pickedItem.id, "category", c); setRecurPickerFor(null); }}
+                          className={`py-2 rounded-lg border text-sm transition ${
+                            c === pickedItem.category ? "border-emerald-500 bg-emerald-50 text-emerald-700 font-medium" : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                          }`}
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-5 gap-2">
+                      {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => { updateRecurringField(pickedItem.id, "day", d); setRecurPickerFor(null); }}
+                          className={`py-2 rounded-lg border text-sm transition ${
+                            d === (pickedItem.day || 1) ? "border-emerald-500 bg-emerald-50 text-emerald-700 font-medium" : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                          }`}
+                        >
+                          {d}{d === 28 ? "(말일)" : ""}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <input
+                    autoFocus
+                    type="text"
+                    inputMode={field === "amount" ? "numeric" : "text"}
+                    value={field === "amount" ? formatNumberInput(recurFieldDraft) : recurFieldDraft}
+                    onChange={(e) => setRecurFieldDraft(field === "amount" ? parseNumberInput(e.target.value) : e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveRecurDraft(); }}
+                    className="w-full h-11 border border-slate-200 rounded-lg px-3 text-base mb-4"
+                  />
+                  <div className="flex gap-2">
+                    <button onClick={() => setRecurPickerFor(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+                      취소
+                    </button>
+                    <button onClick={saveRecurDraft} className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium">
+                      저장
+                    </button>
                   </div>
-                ) : (
-                  <div className="grid grid-cols-5 gap-2">
-                    {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-                      <button
-                        key={d}
-                        onClick={() => { updateRecurringField(pickedItem.id, "day", d); setRecurPickerFor(null); }}
-                        className={`py-2 rounded-lg border text-sm transition ${
-                          d === (pickedItem.day || 1) ? "border-emerald-500 bg-emerald-50 text-emerald-700 font-medium" : "border-slate-200 text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        {d}{d === 28 ? "(말일)" : ""}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </>
         );
