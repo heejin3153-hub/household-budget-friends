@@ -160,14 +160,28 @@ function makeStackedTotalLabel(dataArr, subCats) {
   };
 }
 
-// 막대 위에 금액을 보여주는 라벨 (수입/지출 그룹형 막대용). extraLift로 옆 막대랑 높이를 갈라줘요.
-function makeBarValueLabel(dataArr, key, extraLift = 0) {
+// 막대 위에 금액을 보여주는 라벨 (수입/지출, 자산/부채 같은 그룹형 막대용).
+// otherKey를 주면, 같은 달 옆 막대랑 실제 픽셀 높이를 비교해서 라벨끼리 안 겹치게 최소 간격을 보장해요.
+function makeBarValueLabel(dataArr, key, otherKey) {
   return (props) => {
-    const { x, y, width, value } = props;
+    const { x, y, width, height, value, index } = props;
     if (!value) return null;
     const cx = x + width / 2;
+    let lift = 0;
+    if (otherKey && height > 0) {
+      const otherValue = Number(dataArr[index]?.[otherKey]) || 0;
+      if (otherValue > 0) {
+        const otherHeight = otherValue * (height / value); // 같은 스케일 기준 상대 막대의 실제 픽셀 높이
+        const heightDiff = Math.abs(height - otherHeight);
+        const MIN_GAP = 14; // 라벨 두 줄이 안 겹치는 데 필요한 최소 픽셀 간격
+        if (heightDiff < MIN_GAP && value <= otherValue) {
+          // 내가 더 짧거나 같은 막대일 때만 그만큼 위로 띄워요 (둘 다 띄우면 다시 겹치니 한쪽만)
+          lift = MIN_GAP - heightDiff;
+        }
+      }
+    }
     return (
-      <text x={cx} y={y - 5 - extraLift} textAnchor="middle" fontSize={9} fontWeight={700} fill="#334155">
+      <text x={cx} y={y - 5 - lift} textAnchor="middle" fontSize={9} fontWeight={700} fill="#334155">
         {formatChartAmount(value)}
       </text>
     );
@@ -2001,8 +2015,8 @@ function HouseholdBudget() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="label" tick={{ fontSize: 12 }} stroke="#94a3b8" tickMargin={14} />
                     <YAxis hide domain={[(dataMin) => Math.min(dataMin, 0), (dataMax) => Math.max(dataMax, 0)]} />
-                    {showIncome && <Bar dataKey="income" name="수입" fill="#34d399" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(monthlyTrend, "income", 11)} />}
-                    {showExpense && <Bar dataKey="expense" name="지출" fill="#f87171" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(monthlyTrend, "expense", 0)} />}
+                    {showIncome && <Bar dataKey="income" name="수입" fill="#34d399" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(monthlyTrend, "income", "expense")} />}
+                    {showExpense && <Bar dataKey="expense" name="지출" fill="#f87171" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(monthlyTrend, "expense", "income")} />}
                     {showNet && <Line type="linear" dataKey="net" name="순현금흐름" stroke="#38bdf8" strokeWidth={2.5} dot={{ r: 3 }} label={makeLineValueLabel("#0284c7")} />}
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -2416,8 +2430,8 @@ function HouseholdBudget() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="label" tick={{ fontSize: 12 }} stroke="#94a3b8" tickMargin={14} />
                   <YAxis hide domain={[(dataMin) => Math.min(dataMin, 0), (dataMax) => Math.max(dataMax, 0)]} />
-                  {showAssetBar && <Bar dataKey="totalAssets" name="자산" fill="#34d399" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(assetHistoryFiltered, "totalAssets", 11)} />}
-                  {showDebtBar && <Bar dataKey="totalDebt" name="부채" fill="#f87171" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(assetHistoryFiltered, "totalDebt", 0)} />}
+                  {showAssetBar && <Bar dataKey="totalAssets" name="자산" fill="#34d399" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(assetHistoryFiltered, "totalAssets", "totalDebt")} />}
+                  {showDebtBar && <Bar dataKey="totalDebt" name="부채" fill="#f87171" radius={[3, 3, 0, 0]} maxBarSize={30} label={makeBarValueLabel(assetHistoryFiltered, "totalDebt", "totalAssets")} />}
                   {showNetBar && <Line type="linear" dataKey="netWorth" name="순자산" stroke="#38bdf8" strokeWidth={2.5} dot={{ r: 3 }} label={makeLineValueLabel("#0284c7")} />}
                 </ComposedChart>
               </ResponsiveContainer>
