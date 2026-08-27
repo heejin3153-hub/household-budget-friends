@@ -2406,16 +2406,9 @@ function HouseholdBudget() {
                         <div className={`font-medium ${nw >= 0 ? "text-slate-700" : "text-red-600"}`}>{formatWon(nw)}</div>
                         <div className="text-[11px] text-slate-400 mt-0.5">자산 {formatWon(ta)}, 부채 -{formatWon(td)}</div>
                       </div>
-                      {confirmDeleteSnapshotMonth === month ? (
-                        <span className="flex items-center gap-1 shrink-0">
-                          <button onClick={() => { deleteSnapshotMonth(month); setConfirmDeleteSnapshotMonth(null); }} className="text-[11px] px-1.5 py-0.5 rounded bg-red-500 text-white">삭제</button>
-                          <button onClick={() => setConfirmDeleteSnapshotMonth(null)} className="text-[11px] px-1.5 py-0.5 rounded border border-slate-200 text-slate-600">취소</button>
-                        </span>
-                      ) : (
-                        <button onClick={() => { setConfirmDeleteSnapshotMonth(month); setToast("삭제하면 이 달 기록이 없어지고, 이전 기록을 이어받아요"); }} className="text-slate-300 hover:text-red-500 shrink-0 ml-2" aria-label="기록 삭제">
-                          <Trash2 size={12} />
-                        </button>
-                      )}
+                      <button onClick={() => setConfirmDeleteSnapshotMonth(month)} className="text-slate-300 hover:text-red-500 shrink-0 ml-2" aria-label="기록 삭제">
+                        <Trash2 size={12} />
+                      </button>
                     </li>
                   );
                 })}
@@ -4372,6 +4365,39 @@ function HouseholdBudget() {
           </div>
         </div>
       )}
+
+      {confirmDeleteSnapshotMonth && (() => {
+        const snap = assetData.monthlySnapshots?.[confirmDeleteSnapshotMonth];
+        if (!snap) return null;
+        const ta = (snap.items || []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
+        const loanBalances = getEffectiveLoanBalances(loanData.monthlySnapshots, confirmDeleteSnapshotMonth, loanData.loans);
+        const loanDebt = Object.values(loanBalances).reduce((s, v) => s + (Number(v) || 0), 0);
+        const td = loanDebt + (snap.liabilities || []).reduce((s, l) => s + (Number(l.amount) || 0), 0);
+        return (
+          <>
+            <div className="fixed inset-0 bg-black/40 z-[60]" onClick={() => setConfirmDeleteSnapshotMonth(null)} />
+            <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-[61] bg-white rounded-2xl p-5 shadow-lg max-w-sm mx-auto">
+              <h3 className="text-sm font-semibold text-slate-800 text-center mb-1">삭제할까요?</h3>
+              <p className="text-sm text-slate-600 text-center mb-3">{formatCycleLabel(confirmDeleteSnapshotMonth, 1)} 기록</p>
+              <p className="text-[11px] text-slate-400 text-center mb-3">자산 {formatWon(ta)} · 부채 {formatWon(td)}</p>
+              <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-4 leading-relaxed">
+                ⚠️ 이 달에 저장된 기록(그때 새로 넣은 항목·이월받아 보이던 항목 구분 없이 전부)이 통째로 없어져요. 다른 달의 기록은 그대로 남고, 이 달은 다시 그 이전 가장 최근 기록을 이어받아 보여줘요.
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => setConfirmDeleteSnapshotMonth(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+                  취소
+                </button>
+                <button
+                  onClick={() => { deleteSnapshotMonth(confirmDeleteSnapshotMonth); setConfirmDeleteSnapshotMonth(null); }}
+                  className="flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-medium"
+                >
+                  삭제
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {showAssetHelpModal && (
         <>
