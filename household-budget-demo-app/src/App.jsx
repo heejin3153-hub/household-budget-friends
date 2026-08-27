@@ -266,8 +266,27 @@ function HouseholdBudget() {
   const [newRecurAmount, setNewRecurAmount] = useState("");
   const [newRecurDay, setNewRecurDay] = useState("1");
   const [confirmDeleteRecurId, setConfirmDeleteRecurId] = useState(null);
-  const [recurPickerFor, setRecurPickerFor] = useState(null); // { id, field: "name" | "amount" | "category" | "day" } | null
-  const [recurFieldDraft, setRecurFieldDraft] = useState("");
+  const [editingRecurId, setEditingRecurId] = useState(null);
+  const [recurDraftName, setRecurDraftName] = useState("");
+  const [recurDraftCategory, setRecurDraftCategory] = useState("");
+  const [recurDraftAmount, setRecurDraftAmount] = useState("");
+  const [recurDraftDay, setRecurDraftDay] = useState(1);
+  function openRecurEditSheet(item) {
+    setEditingRecurId(item.id);
+    setRecurDraftName(item.name);
+    setRecurDraftCategory(item.category);
+    setRecurDraftAmount(String(item.amount || 0));
+    setRecurDraftDay(item.day || 1);
+  }
+  function saveRecurEditSheet() {
+    const name = recurDraftName.trim();
+    if (!name) return;
+    const next = recurringItems.map((r) =>
+      r.id === editingRecurId ? { ...r, name, category: recurDraftCategory, amount: Number(recurDraftAmount) || 0, day: recurDraftDay } : r
+    );
+    persistRecurring(next);
+    setEditingRecurId(null);
+  }
   const [showInstallment, setShowInstallment] = useState(false);
   const [instName, setInstName] = useState("");
   const [instTotal, setInstTotal] = useState("");
@@ -1466,10 +1485,6 @@ function HouseholdBudget() {
     setInstName(""); setInstTotal(""); setInstMonths("");
     setShowInstallment(false);
   }
-  function updateRecurringField(id, field, value) {
-    const next = recurringItems.map((r) => (r.id === id ? { ...r, [field]: value } : r));
-    persistRecurring(next);
-  }
   function deleteRecurringItem(id) {
     persistRecurring(recurringItems.filter((r) => r.id !== id));
   }
@@ -2649,41 +2664,19 @@ function HouseholdBudget() {
                       >
                         <CheckCircle2 size={13} />
                       </button>
-                      <div className="flex-1 min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => { setRecurPickerFor({ id: item.id, field: "name" }); setRecurFieldDraft(item.name); }}
-                          className={`w-full text-left text-[13px] truncate px-0.5 ${logged ? "text-slate-400 line-through" : "text-slate-800"}`}
-                        >
-                          {item.name}
-                        </button>
-                        <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 mt-0.5 text-[10px] text-slate-400">
-                          <button
-                            type="button"
-                            onClick={() => setRecurPickerFor({ id: item.id, field: "category" })}
-                            className="max-w-[68px] truncate hover:text-slate-600"
-                          >
-                            {item.category}
-                          </button>
-                          <span className="text-slate-300">·</span>
-                          <button
-                            type="button"
-                            onClick={() => { setRecurPickerFor({ id: item.id, field: "amount" }); setRecurFieldDraft(formatNumberInput(item.amount)); }}
-                            className="hover:text-slate-600"
-                          >
-                            {formatNumberInput(item.amount)}
-                          </button>
-                          <span className="text-slate-300">·</span>
-                          <span className="shrink-0">매월</span>
-                          <button
-                            type="button"
-                            onClick={() => setRecurPickerFor({ id: item.id, field: "day" })}
-                            className="shrink-0 hover:text-slate-600"
-                          >
-                            {item.day || 1}{(item.day || 1) === 28 ? "(말일)" : ""}일
-                          </button>
+                      <button
+                        type="button"
+                        onClick={() => openRecurEditSheet(item)}
+                        className="flex-1 min-w-0 text-left"
+                      >
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className={`text-sm truncate ${logged ? "text-slate-400 line-through" : "text-slate-800"}`}>{item.name}</span>
+                          <span className={`text-sm font-medium shrink-0 ${logged ? "text-slate-400 line-through" : "text-slate-800"}`}>{formatWon(item.amount)}</span>
                         </div>
-                      </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          {item.category} · 매월 {item.day || 1}{(item.day || 1) === 28 ? "(말일)" : ""}일
+                        </div>
+                      </button>
                       {confirmDeleteRecurId === item.id ? (
                         <div className="flex items-center gap-1 shrink-0">
                           <button onClick={() => { deleteRecurringItem(item.id); setConfirmDeleteRecurId(null); }}
@@ -4444,83 +4437,73 @@ function HouseholdBudget() {
         </>
       )}
 
-      {recurPickerFor && (() => {
-        const pickedItem = recurringItems.find((r) => r.id === recurPickerFor.id);
-        if (!pickedItem) return null;
-        const field = recurPickerFor.field;
-        const isChoice = field === "category" || field === "day";
-        const title = field === "category" ? "카테고리 선택" : field === "day" ? "매월 며칠" : field === "name" ? "이름 수정" : "금액 수정";
-        function saveRecurDraft() {
-          if (field === "name") {
-            const v = recurFieldDraft.trim();
-            if (v) updateRecurringField(pickedItem.id, "name", v);
-          } else if (field === "amount") {
-            updateRecurringField(pickedItem.id, "amount", Number(recurFieldDraft) || 0);
-          }
-          setRecurPickerFor(null);
-        }
-        return (
-          <>
-            <div className="fixed inset-0 bg-black/40 z-[60]" onClick={() => setRecurPickerFor(null)} />
-            <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-[61] bg-white rounded-2xl shadow-lg max-w-sm mx-auto p-4 max-h-[70vh] flex flex-col">
-              <h4 className="text-sm font-semibold text-slate-800 mb-3 shrink-0">{title}</h4>
-              {isChoice ? (
-                <div className="overflow-y-auto">
-                  {field === "category" ? (
-                    <div className="grid grid-cols-3 gap-2">
-                      {FIXED_CATEGORIES.map((c) => (
-                        <button
-                          key={c}
-                          onClick={() => { updateRecurringField(pickedItem.id, "category", c); setRecurPickerFor(null); }}
-                          className={`py-2 rounded-lg border text-sm transition ${
-                            c === pickedItem.category ? "border-emerald-500 bg-emerald-50 text-emerald-700 font-medium" : "border-slate-200 text-slate-700 hover:bg-slate-50"
-                          }`}
-                        >
-                          {c}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-5 gap-2">
-                      {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-                        <button
-                          key={d}
-                          onClick={() => { updateRecurringField(pickedItem.id, "day", d); setRecurPickerFor(null); }}
-                          className={`py-2 rounded-lg border text-sm transition ${
-                            d === (pickedItem.day || 1) ? "border-emerald-500 bg-emerald-50 text-emerald-700 font-medium" : "border-slate-200 text-slate-700 hover:bg-slate-50"
-                          }`}
-                        >
-                          {d}{d === 28 ? "(말일)" : ""}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
+      {editingRecurId && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-[60]" onClick={() => setEditingRecurId(null)} />
+          <div className="fixed inset-x-3 top-1/2 -translate-y-1/2 z-[61] bg-white rounded-2xl shadow-lg max-w-md mx-auto max-h-[85vh] overflow-y-auto">
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-slate-800">정기지출 수정</h3>
+                <button onClick={() => setEditingRecurId(null)} className="text-slate-400 hover:text-slate-700">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="mb-3">
+                <label className="text-xs text-slate-500 block mb-1">이름</label>
+                <input
+                  autoFocus
+                  value={recurDraftName}
+                  onChange={(e) => setRecurDraftName(e.target.value)}
+                  className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
-                  <input
-                    autoFocus
-                    type="text"
-                    inputMode={field === "amount" ? "numeric" : "text"}
-                    value={field === "amount" ? formatNumberInput(recurFieldDraft) : recurFieldDraft}
-                    onChange={(e) => setRecurFieldDraft(field === "amount" ? parseNumberInput(e.target.value) : e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") saveRecurDraft(); }}
-                    className="w-full h-11 border border-slate-200 rounded-lg px-3 text-base mb-4"
-                  />
-                  <div className="flex gap-2">
-                    <button onClick={() => setRecurPickerFor(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
-                      취소
-                    </button>
-                    <button onClick={saveRecurDraft} className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium">
-                      저장
-                    </button>
-                  </div>
+                  <label className="text-xs text-slate-500 block mb-1">카테고리</label>
+                  <select
+                    value={recurDraftCategory}
+                    onChange={(e) => setRecurDraftCategory(e.target.value)}
+                    className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  >
+                    {FIXED_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
-              )}
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">매월 며칠</label>
+                  <select
+                    value={recurDraftDay}
+                    onChange={(e) => setRecurDraftDay(Number(e.target.value))}
+                    className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  >
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>{d}{d === 28 ? "(말일)" : ""}일</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="mb-4">
+                <label className="text-xs text-slate-500 block mb-1">금액</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={formatNumberInput(recurDraftAmount)}
+                  onChange={(e) => setRecurDraftAmount(parseNumberInput(e.target.value))}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveRecurEditSheet(); }}
+                  className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm text-right focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setEditingRecurId(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+                  취소
+                </button>
+                <button onClick={saveRecurEditSheet} className="flex-1 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium">
+                  저장
+                </button>
+              </div>
             </div>
-          </>
-        );
-      })()}
+          </div>
+        </>
+      )}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm px-4 py-2.5 rounded-full shadow-lg flex items-center gap-2">
