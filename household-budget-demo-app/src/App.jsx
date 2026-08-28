@@ -317,6 +317,7 @@ function HouseholdBudget() {
     return () => clearTimeout(timer);
   }, [toast, toastType]);
   const [lastFailedSave, setLastFailedSave] = useState(null);
+  const [savingTx, setSavingTx] = useState(false);
 
   useEffect(() => {
     import("xlsx"); // 엑셀 백업/불러오기 기능을 미리 로드해서, 처음 눌러도 바로 동작하게 해요
@@ -563,6 +564,7 @@ function HouseholdBudget() {
 
   async function persistTx(next) {
     setTransactions(next);
+    setSavingTx(true);
     try {
       const result = await storageSet(TX_KEY, next);
       if (result) { setSaveError(""); setLastFailedSave(null); return true; }
@@ -575,6 +577,8 @@ function HouseholdBudget() {
       setSaveError("저장에 실패했어요. 다시 시도해주세요.");
       setLastFailedSave({ key: TX_KEY, value: next, errorMsg: "저장에 실패했어요. 다시 시도해주세요." });
       return false;
+    } finally {
+      setSavingTx(false);
     }
   }
   function persistSettings(next) {
@@ -928,6 +932,7 @@ function HouseholdBudget() {
 
   async function addTransaction(e) {
     e.preventDefault();
+    if (savingTx) return;
     let finalAmount;
     let finalMemo = memo.trim();
     if (type === "expense" && travelMode) {
@@ -1007,6 +1012,7 @@ function HouseholdBudget() {
   }
   async function saveEditedTransaction(e) {
     e.preventDefault();
+    if (savingTx) return;
     let finalAmount;
     let finalMemo = emMemo.trim();
     if (emType === "expense" && emTravelMode) {
@@ -2948,9 +2954,9 @@ function HouseholdBudget() {
         )}
 
         <div className="flex gap-2">
-          <button ref={submitBtnRef} type="button" onClick={addTransaction}
-            className="flex-1 flex items-center justify-center gap-1 text-white rounded-xl py-2.5 text-sm font-medium transition bg-slate-900 hover:bg-slate-800">
-            <Plus size={16} /> 추가하기
+          <button ref={submitBtnRef} type="button" onClick={addTransaction} disabled={savingTx}
+            className="flex-1 flex items-center justify-center gap-1 text-white rounded-xl py-2.5 text-sm font-medium transition bg-slate-900 hover:bg-slate-800 disabled:opacity-60">
+            {savingTx ? <><Loader2 size={16} className="animate-spin" /> 저장 중...</> : <><Plus size={16} /> 추가하기</>}
           </button>
         </div>
       </form>
@@ -4140,9 +4146,9 @@ function HouseholdBudget() {
                   className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
                   취소
                 </button>
-                <button type="button" onClick={saveEditedTransaction}
-                  className="flex-1 flex items-center justify-center gap-1 bg-amber-600 hover:bg-amber-700 text-white rounded-xl py-2.5 text-sm font-medium transition">
-                  <Pencil size={16} /> 저장하기
+                <button type="button" onClick={saveEditedTransaction} disabled={savingTx}
+                  className="flex-1 flex items-center justify-center gap-1 bg-amber-600 hover:bg-amber-700 text-white rounded-xl py-2.5 text-sm font-medium transition disabled:opacity-60">
+                  {savingTx ? <><Loader2 size={16} className="animate-spin" /> 저장 중...</> : <><Pencil size={16} /> 저장하기</>}
                 </button>
               </div>
             </form>
