@@ -10,7 +10,7 @@ import {
 } from "./constants";
 import {
   todayStr, formatWon, formatNumberInput, parseNumberInput, monthsBetween, categoryColor, splitInstallment, txDisplaySign,
-  getCycleLabel, getCycleRange, getDateForCycleDay, formatCycleLabel,
+  getCycleLabel, getCycleRange, getDateForCycleDay, formatCycleLabel, formatDateDisplay,
 } from "./utils";
 import DatePickerField from "./components/DatePickerField";
 import ProgressBar from "./components/ProgressBar";
@@ -1512,7 +1512,7 @@ function HouseholdBudget() {
         type: "expense", date, category: item.category, amount: Number(item.amount) || 0, memo: item.name,
       };
       const ok = await persistTx([newTx, ...transactions]);
-      if (ok) setToast(`${item.name} → ${date} 로 기록했어요`);
+      if (ok) setToast(`${item.name} → ${formatDateDisplay(date)} 로 기록했어요`);
     }
   }
   async function updateTargetDate(d) {
@@ -4567,7 +4567,7 @@ function HouseholdBudget() {
       })()}
 
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm px-4 py-2.5 rounded-2xl shadow-lg flex items-center gap-2 max-w-[85vw]">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm px-4 py-2.5 rounded-2xl shadow-lg flex items-center gap-2 w-max max-w-[92vw]">
           <span className="shrink-0">✅</span>
           <span>{toast}</span>
         </div>
