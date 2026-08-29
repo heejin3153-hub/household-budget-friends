@@ -941,13 +941,17 @@ function HouseholdBudget() {
       finalAmount = Math.round(fa * rate);
       const fxNote = `${fa.toLocaleString("ko-KR")}${settings.fxCurrency} × ${rate}원`;
       finalMemo = finalMemo ? `${fxNote} · ${finalMemo}` : fxNote;
+      if (isNaN(finalAmount) || finalAmount === 0) {
+        setSaveError("환산된 금액이 0원이에요. 통화·환율·금액을 확인해주세요.");
+        return;
+      }
     } else {
       finalAmount = Number(amount) || 0;
       if (type === "expense" && isNegative) finalAmount = -Math.abs(finalAmount);
-    }
-    if (isNaN(finalAmount) || finalAmount === 0) {
-      setSaveError(travelMode ? "환산된 금액이 0원이에요. 통화·환율·금액을 확인해주세요." : "금액을 입력해주세요.");
-      return;
+      if (amount === "" || isNaN(finalAmount)) {
+        setSaveError("금액을 입력해주세요.");
+        return;
+      }
     }
     if (type === "income" && finalAmount < 0) {
       setSaveError("수입 금액은 0보다 커야 해요.");
@@ -1021,11 +1025,13 @@ function HouseholdBudget() {
       finalAmount = Math.round(fa * rate);
       const fxNote = `${fa.toLocaleString("ko-KR")}${settings.fxCurrency} × ${rate}원`;
       finalMemo = finalMemo ? `${fxNote} · ${finalMemo}` : fxNote;
+      if (isNaN(finalAmount) || finalAmount === 0) return;
     } else {
       finalAmount = Number(emAmount) || 0;
       if (emType === "expense" && emIsNegative) finalAmount = -Math.abs(finalAmount);
+      if (emAmount === "" || isNaN(finalAmount)) return;
     }
-    if (isNaN(finalAmount) || finalAmount === 0 || !emDate) return;
+    if (!emDate) return;
     if (emType === "income" && finalAmount < 0) {
       setSaveError("수입 금액은 0보다 커야 해요.");
       return;
