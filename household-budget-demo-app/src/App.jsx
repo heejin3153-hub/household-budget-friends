@@ -3052,7 +3052,7 @@ function HouseholdBudget() {
         ) : (
           <>
           <div ref={cashFlowRef} className="bg-white rounded-2xl border border-slate-200 p-5">
-          <div className="text-sm font-semibold text-slate-800 mb-3">{formatCycleLabel(selectedMonth, settings.cycleStartDay)} 현금흐름표</div>
+          <div className="text-base font-bold text-slate-900 mb-4">{formatCycleLabel(selectedMonth, settings.cycleStartDay)} 현금흐름표</div>
           <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 mb-2.5">
             <h4 className="text-xs font-bold text-emerald-700 mb-1.5">🟢 수입</h4>
             {cashFlowStatement.incomeItems.length === 0 ? (
