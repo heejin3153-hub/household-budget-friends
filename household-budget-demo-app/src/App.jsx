@@ -320,6 +320,7 @@ function HouseholdBudget() {
   const [savingTx, setSavingTx] = useState(false);
   const cashFlowRef = useRef(null);
   const [exportedImageUrl, setExportedImageUrl] = useState(null);
+  const [exportShareFile, setExportShareFile] = useState(null);
   const [exportingImage, setExportingImage] = useState(false);
   const [showExportTitle, setShowExportTitle] = useState(false);
 
@@ -337,26 +338,31 @@ function HouseholdBudget() {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))); // 제목이 화면에 그려질 때까지 한 프레임 기다려요
       const dataUrl = await toPng(cashFlowRef.current, { backgroundColor: "#ffffff", pixelRatio: 2 });
       const filename = `현금흐름표_${selectedMonth}.png`;
+      let file = null;
       if (navigator.share && navigator.canShare) {
         const blob = await (await fetch(dataUrl)).blob();
-        const file = new File([blob], filename, { type: "image/png" });
-        if (navigator.canShare({ files: [file] })) {
-          try {
-            await navigator.share({ files: [file], title: filename });
-            return;
-          } catch (shareErr) {
-            if (shareErr && shareErr.name === "AbortError") return; // 사용자가 공유를 취소함
-            // 공유 자체가 실패하면 아래 미리보기로 대체해요
-          }
-        }
+        const candidate = new File([blob], filename, { type: "image/png" });
+        if (navigator.canShare({ files: [candidate] })) file = candidate;
       }
-      setExportedImageUrl(dataUrl); // 공유하기를 지원하지 않는 환경(주로 데스크톱)을 위한 대체 화면
+      setExportShareFile(file);
+      setExportedImageUrl(dataUrl);
     } catch (e) {
       console.error("cash flow image share error", e);
       setToast("이미지 생성에 실패했어요.");
     } finally {
       setShowExportTitle(false);
       setExportingImage(false);
+    }
+  }
+
+  async function confirmShareCashFlowImage() {
+    if (!exportShareFile) return;
+    try {
+      await navigator.share({ files: [exportShareFile], title: exportShareFile.name });
+      setExportedImageUrl(null);
+      setExportShareFile(null);
+    } catch (e) {
+      // 사용자가 공유를 취소한 경우 등은 조용히 무시하고 미리보기를 유지해요
     }
   }
 
@@ -4303,34 +4309,38 @@ function HouseholdBudget() {
       )}
 
       {exportedImageUrl && (
-        <div
-          className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setExportedImageUrl(null)}
-        >
+        <>
+          <div className="fixed inset-0 z-[70] bg-black/40" onClick={() => { setExportedImageUrl(null); setExportShareFile(null); }} />
           <div
-            className="bg-white rounded-2xl shadow-lg max-w-sm w-full flex flex-col overflow-hidden"
+            className="fixed inset-x-0 bottom-0 z-[70] bg-white rounded-t-3xl shadow-lg flex flex-col"
             style={{ height: Math.round(viewportH * 0.85) + "px" }}
-            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-4 pt-4 shrink-0">
-              <h3 className="text-sm font-semibold text-slate-800">이미지로 저장</h3>
-              <button onClick={() => setExportedImageUrl(null)} className="text-slate-400 hover:text-slate-700">
-                <X size={18} />
+            <div className="w-10 h-1.5 bg-slate-200 rounded-full mx-auto mt-3 mb-1 shrink-0" />
+            <div className="flex items-center justify-between px-5 pt-2 pb-1 shrink-0">
+              <div>
+                <h3 className="text-base font-semibold text-slate-800">이미지로 저장</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {exportShareFile ? "공유하거나 저장할 수 있어요" : "길게 누르거나 마우스 오른쪽 버튼으로 저장하세요"}
+                </p>
+              </div>
+              <button onClick={() => { setExportedImageUrl(null); setExportShareFile(null); }} className="text-slate-400 hover:text-slate-700 shrink-0">
+                <X size={20} />
               </button>
             </div>
-            <p className="text-xs text-slate-500 px-4 mt-1 mb-3 shrink-0">이 기기에서는 바로 공유하기가 지원되지 않아서 대신 이미지를 보여드려요. 길게 누르거나 마우스 오른쪽 버튼으로 저장해주세요.</p>
-            <div className="relative min-h-0 flex-1">
-              <div className="absolute inset-0 px-4 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
-                <img src={exportedImageUrl} alt="현금흐름표" className="w-full rounded-xl border border-slate-200" />
+            <div className="relative min-h-0 flex-1 mt-2">
+              <div className="absolute inset-0 px-5 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
+                <img src={exportedImageUrl} alt="현금흐름표" className="w-full rounded-xl border border-slate-200 mb-4" />
               </div>
             </div>
-            <div className="p-4 shrink-0">
-              <button onClick={() => setExportedImageUrl(null)} className="w-full py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
-                닫기
-              </button>
-            </div>
+            {exportShareFile && (
+              <div className="p-4 shrink-0">
+                <button onClick={confirmShareCashFlowImage} className="w-full py-3.5 rounded-2xl bg-slate-900 text-white text-base font-semibold">
+                  공유하기
+                </button>
+              </div>
+            )}
           </div>
-        </div>
+        </>
       )}
 
       {showWhatsNew && (
