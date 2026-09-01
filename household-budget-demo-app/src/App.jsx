@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar, ComposedChart } from "recharts";
 import {
   Trash2, Plus, TrendingUp, TrendingDown, Wallet, Loader2,
-  PiggyBank, Target, ChevronDown, ChevronUp, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut, Bell, Share2,
+  PiggyBank, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut, Bell, Share2,
 } from "lucide-react";
 import { storageGet, storageSet, setCurrentUid, signInWithGoogle, signOutUser, watchAuthState, setupOrVerifyPin, checkPinExists } from "./firebase";
 import {
@@ -250,6 +250,7 @@ function HouseholdBudget() {
   const [draftGroups, setDraftGroups] = useState([]);
   const [draftIncomeGroups, setDraftIncomeGroups] = useState([]);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [reorderMode, setReorderMode] = useState(false);
   const [newCatText, setNewCatText] = useState({});
   const [newGroupName, setNewGroupName] = useState("");
   const [viewportH, setViewportH] = useState(typeof window !== "undefined" ? window.innerHeight : 700);
@@ -875,16 +876,19 @@ function HouseholdBudget() {
     setDraftGroups(JSON.parse(JSON.stringify(groups)));
     setDraftIncomeGroups(JSON.parse(JSON.stringify(incomeGroups)));
     setPendingDelete(null);
+    setReorderMode(false);
     setShowCategoryManager(true);
   }
   function cancelCategoryManager() {
     setShowCategoryManager(false);
     setPendingDelete(null);
+    setReorderMode(false);
   }
   function applyCategoryManager() {
     persistCategoryConfig(draftGroups, draftIncomeGroups);
     setShowCategoryManager(false);
     setPendingDelete(null);
+    setReorderMode(false);
     setToast("카테고리 변경사항을 적용했어요");
   }
   function renameGroupLabel(groupId, newLabel) {
@@ -909,6 +913,17 @@ function HouseholdBudget() {
   }
   function renameCategoryInGroup(groupId, oldName, newName) {
     setDraftGroups(draftGroups.map((g) => (g.id === groupId ? { ...g, categories: g.categories.map((c) => (c === oldName ? newName : c)) } : g)));
+  }
+  function moveCategoryInGroup(groupId, catName, dir) {
+    setDraftGroups(draftGroups.map((g) => {
+      if (g.id !== groupId) return g;
+      const idx = g.categories.indexOf(catName);
+      const newIdx = idx + dir;
+      if (idx === -1 || newIdx < 0 || newIdx >= g.categories.length) return g;
+      const next = [...g.categories];
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      return { ...g, categories: next };
+    }));
   }
   function addNewGroup(name) {
     const label = (name || "").trim();
@@ -938,6 +953,17 @@ function HouseholdBudget() {
   }
   function renameCategoryInIncomeGroup(groupId, oldName, newName) {
     setDraftIncomeGroups(draftIncomeGroups.map((g) => (g.id === groupId ? { ...g, categories: g.categories.map((c) => (c === oldName ? newName : c)) } : g)));
+  }
+  function moveCategoryInIncomeGroup(groupId, catName, dir) {
+    setDraftIncomeGroups(draftIncomeGroups.map((g) => {
+      if (g.id !== groupId) return g;
+      const idx = g.categories.indexOf(catName);
+      const newIdx = idx + dir;
+      if (idx === -1 || newIdx < 0 || newIdx >= g.categories.length) return g;
+      const next = [...g.categories];
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      return { ...g, categories: next };
+    }));
   }
   function addNewIncomeGroup(name) {
     const label = (name || "").trim();
@@ -3327,6 +3353,17 @@ function HouseholdBudget() {
             </button>
           </div>
 
+          <div className="flex items-center justify-between px-4 py-2.5 shrink-0 border-b border-slate-100 bg-slate-50">
+            <label className="text-xs text-slate-600">정렬 변경</label>
+            <button
+              type="button"
+              onClick={() => setReorderMode((v) => !v)}
+              className={`relative w-10 h-6 rounded-full transition ${reorderMode ? "bg-emerald-500" : "bg-slate-300"}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${reorderMode ? "translate-x-4" : ""}`} />
+            </button>
+          </div>
+
           <div className="overflow-y-auto px-4 py-3 flex-1 min-h-0" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
           <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">지출 카테고리</h4>
           {draftGroups.map((g) => (
@@ -3357,17 +3394,39 @@ function HouseholdBudget() {
               </label>
 
               <div className="flex flex-wrap gap-1.5 mb-2">
-                {g.categories.map((c) => (
+                {g.categories.map((c, i) => (
                   <span key={c} className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-full pl-2.5 pr-1.5 py-1 text-xs text-slate-600">
-                    <input
-                      value={c}
-                      onChange={(e) => renameCategoryInGroup(g.id, c, e.target.value)}
-                      className="bg-transparent border-0 focus:outline-none text-xs w-auto"
-                      style={{ width: `${Math.max(c.length * 1.8 + 1, 3)}ch` }}
-                    />
-                    <button onClick={() => setPendingDelete({ type: "category", groupId: g.id, name: c })} className="text-slate-300 hover:text-red-500">
-                      <X size={11} />
-                    </button>
+                    {reorderMode ? (
+                      <>
+                        <button
+                          onClick={() => moveCategoryInGroup(g.id, c, -1)}
+                          disabled={i === 0}
+                          className="text-slate-400 disabled:opacity-20 disabled:cursor-not-allowed"
+                        >
+                          <ChevronLeft size={13} />
+                        </button>
+                        <span className="px-0.5">{c}</span>
+                        <button
+                          onClick={() => moveCategoryInGroup(g.id, c, 1)}
+                          disabled={i === g.categories.length - 1}
+                          className="text-slate-400 disabled:opacity-20 disabled:cursor-not-allowed"
+                        >
+                          <ChevronRight size={13} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          value={c}
+                          onChange={(e) => renameCategoryInGroup(g.id, c, e.target.value)}
+                          className="bg-transparent border-0 focus:outline-none text-xs w-auto"
+                          style={{ width: `${Math.max(c.length * 1.8 + 1, 3)}ch` }}
+                        />
+                        <button onClick={() => setPendingDelete({ type: "category", groupId: g.id, name: c })} className="text-slate-300 hover:text-red-500">
+                          <X size={11} />
+                        </button>
+                      </>
+                    )}
                   </span>
                 ))}
               </div>
@@ -3415,17 +3474,39 @@ function HouseholdBudget() {
               </div>
 
               <div className="flex flex-wrap gap-1.5 mb-2">
-                {g.categories.map((c) => (
+                {g.categories.map((c, i) => (
                   <span key={c} className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-full pl-2.5 pr-1.5 py-1 text-xs text-slate-600">
-                    <input
-                      value={c}
-                      onChange={(e) => renameCategoryInIncomeGroup(g.id, c, e.target.value)}
-                      className="bg-transparent border-0 focus:outline-none text-xs w-auto"
-                      style={{ width: `${Math.max(c.length * 1.8 + 1, 3)}ch` }}
-                    />
-                    <button onClick={() => setPendingDelete({ type: "incomeCategory", groupId: g.id, name: c })} className="text-slate-300 hover:text-red-500">
-                      <X size={11} />
-                    </button>
+                    {reorderMode ? (
+                      <>
+                        <button
+                          onClick={() => moveCategoryInIncomeGroup(g.id, c, -1)}
+                          disabled={i === 0}
+                          className="text-slate-400 disabled:opacity-20 disabled:cursor-not-allowed"
+                        >
+                          <ChevronLeft size={13} />
+                        </button>
+                        <span className="px-0.5">{c}</span>
+                        <button
+                          onClick={() => moveCategoryInIncomeGroup(g.id, c, 1)}
+                          disabled={i === g.categories.length - 1}
+                          className="text-slate-400 disabled:opacity-20 disabled:cursor-not-allowed"
+                        >
+                          <ChevronRight size={13} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          value={c}
+                          onChange={(e) => renameCategoryInIncomeGroup(g.id, c, e.target.value)}
+                          className="bg-transparent border-0 focus:outline-none text-xs w-auto"
+                          style={{ width: `${Math.max(c.length * 1.8 + 1, 3)}ch` }}
+                        />
+                        <button onClick={() => setPendingDelete({ type: "incomeCategory", groupId: g.id, name: c })} className="text-slate-300 hover:text-red-500">
+                          <X size={11} />
+                        </button>
+                      </>
+                    )}
                   </span>
                 ))}
               </div>
