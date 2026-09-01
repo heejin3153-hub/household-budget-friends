@@ -484,13 +484,39 @@ function HouseholdBudget() {
 
   useEffect(() => {
     (async () => {
+      // 카테고리 그룹을 먼저 불러와서, 지금 실제로 쓰이고 있는 카테고리 이름은
+      // 예전 이름 자동 이관(CATEGORY_RENAME_MAP) 대상에서 제외해요.
+      // (예: 예전엔 "생활용품"→"생활"로 자동 이관됐는데, 사용자가 카테고리 관리에서
+      // "생활용품"이라는 이름을 다시 직접 만들어 쓰는 경우 그걸 건드리면 안 돼요.)
+      let liveCategories = new Set([
+        ...DEFAULT_GROUPS.flatMap((g) => g.categories),
+        ...DEFAULT_INCOME_GROUPS.flatMap((g) => g.categories),
+      ]);
+      try {
+        const cRes = await storageGet(CATEGORY_CONFIG_KEY);
+        if (cRes && cRes.value) {
+          const parsed = JSON.parse(cRes.value);
+          if (parsed.groups) {
+            setGroups(parsed.groups);
+            liveCategories = new Set(parsed.groups.flatMap((g) => g.categories || []));
+          }
+          if (parsed.incomeGroups) {
+            setIncomeGroups(parsed.incomeGroups);
+            parsed.incomeGroups.flatMap((g) => g.categories || []).forEach((c) => liveCategories.add(c));
+          } else if (parsed.incomeCategories) {
+            // 예전 버전(낱개 목록) 데이터를 그룹 구조로 자동 이관
+            setIncomeGroups([{ id: "income", label: "수입", categories: parsed.incomeCategories }]);
+            parsed.incomeCategories.forEach((c) => liveCategories.add(c));
+          }
+        }
+      } catch (e) {}
       try {
         const txRes = await storageGet(TX_KEY);
         if (txRes && txRes.value) {
           const loaded = JSON.parse(txRes.value);
           let changed = false;
           const migrated = loaded.map((t) => {
-            if (CATEGORY_RENAME_MAP[t.category]) {
+            if (CATEGORY_RENAME_MAP[t.category] && !liveCategories.has(t.category)) {
               changed = true;
               return { ...t, category: CATEGORY_RENAME_MAP[t.category] };
             }
@@ -538,7 +564,7 @@ function HouseholdBudget() {
           const loadedR = JSON.parse(rRes.value);
           let rChanged = false;
           const migratedR = loadedR.map((r) => {
-            if (CATEGORY_RENAME_MAP[r.category]) {
+            if (CATEGORY_RENAME_MAP[r.category] && !liveCategories.has(r.category)) {
               rChanged = true;
               return { ...r, category: CATEGORY_RENAME_MAP[r.category] };
             }
@@ -553,19 +579,6 @@ function HouseholdBudget() {
       try {
         const bRes = await storageGet(BUDGETS_KEY);
         if (bRes && bRes.value) setMonthlyBudgets(JSON.parse(bRes.value));
-      } catch (e) {}
-      try {
-        const cRes = await storageGet(CATEGORY_CONFIG_KEY);
-        if (cRes && cRes.value) {
-          const parsed = JSON.parse(cRes.value);
-          if (parsed.groups) setGroups(parsed.groups);
-          if (parsed.incomeGroups) {
-            setIncomeGroups(parsed.incomeGroups);
-          } else if (parsed.incomeCategories) {
-            // 예전 버전(낱개 목록) 데이터를 그룹 구조로 자동 이관
-            setIncomeGroups([{ id: "income", label: "수입", categories: parsed.incomeCategories }]);
-          }
-        }
       } catch (e) {}
       try {
         const aRes = await storageGet(ASSETS_KEY);
@@ -1689,8 +1702,10 @@ function HouseholdBudget() {
 
   function resolveImportedCategory(rawCategory, rawGroup) {
     if (!rawCategory) return rawCategory;
-    // 이미 예전 이름이면 우선 새 이름으로 변환
-    let cat = CATEGORY_RENAME_MAP[rawCategory] || rawCategory;
+    // 이미 예전 이름이면 우선 새 이름으로 변환 — 단, 지금 실제로 쓰고 있는 카테고리 이름이면(사용자가
+    // 카테고리 관리에서 직접 같은 이름을 다시 만들어 쓰는 경우) 건드리지 않아요.
+    const liveCategories = new Set([...groups.flatMap((g) => g.categories || []), ...incomeGroups.flatMap((g) => g.categories || [])]);
+    let cat = (CATEGORY_RENAME_MAP[rawCategory] && !liveCategories.has(rawCategory)) ? CATEGORY_RENAME_MAP[rawCategory] : rawCategory;
     // "식비/문화/기타"처럼 그룹마다 겹치는 이름은 그때 내보낸 "분류" 칸으로 원래 그룹을 되짚어서 교정
     const AMBIGUOUS = ["식비", "문화", "기타"];
     if (AMBIGUOUS.includes(cat) && rawGroup) {
