@@ -336,7 +336,8 @@ function HouseholdBudget() {
       const { toPng } = await import("html-to-image");
       setShowExportTitle(true);
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))); // 제목이 화면에 그려질 때까지 한 프레임 기다려요
-      const dataUrl = await toPng(cashFlowRef.current, { backgroundColor: "#ffffff", pixelRatio: 2 });
+      const capturePixelRatio = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3); // 기기 해상도에 맞춰 선명하게, 너무 큰 파일은 안 되게 2~3배 사이로 제한
+      const dataUrl = await toPng(cashFlowRef.current, { backgroundColor: "#ffffff", pixelRatio: capturePixelRatio });
       const filename = `현금흐름표_${selectedMonth}.png`;
       let file = null;
       if (navigator.share && navigator.canShare) {
