@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar, ComposedChart } from "recharts";
 import {
   Trash2, Plus, TrendingUp, TrendingDown, Wallet, Loader2,
-  PiggyBank, Target, ChevronDown, ChevronUp, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut, Bell, Camera, Share2,
+  PiggyBank, Target, ChevronDown, ChevronUp, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut, Bell, Share2,
 } from "lucide-react";
 import { storageGet, storageSet, setCurrentUid, signInWithGoogle, signOutUser, watchAuthState, setupOrVerifyPin, checkPinExists } from "./firebase";
 import {
@@ -327,32 +327,32 @@ function HouseholdBudget() {
     import("html-to-image"); // 현금흐름표 이미지로 저장 기능을 미리 로드해서, 처음 눌러도 바로 동작하게 해요
   }, []);
 
-  async function exportCashFlowImage() {
+  async function shareCashFlowImage() {
     if (exportingImage || !cashFlowRef.current) return;
     setExportingImage(true);
     try {
       const { toPng } = await import("html-to-image");
       const dataUrl = await toPng(cashFlowRef.current, { backgroundColor: "#ffffff", pixelRatio: 2 });
-      setExportedImageUrl(dataUrl);
+      const filename = `현금흐름표_${selectedMonth}.png`;
+      if (navigator.share && navigator.canShare) {
+        const blob = await (await fetch(dataUrl)).blob();
+        const file = new File([blob], filename, { type: "image/png" });
+        if (navigator.canShare({ files: [file] })) {
+          try {
+            await navigator.share({ files: [file], title: filename });
+            return;
+          } catch (shareErr) {
+            if (shareErr && shareErr.name === "AbortError") return; // 사용자가 공유를 취소함
+            // 공유 자체가 실패하면 아래 미리보기로 대체해요
+          }
+        }
+      }
+      setExportedImageUrl(dataUrl); // 공유하기를 지원하지 않는 환경(주로 데스크톱)을 위한 대체 화면
     } catch (e) {
-      console.error("cash flow image export error", e);
+      console.error("cash flow image share error", e);
       setToast("이미지 생성에 실패했어요.");
     } finally {
       setExportingImage(false);
-    }
-  }
-
-  async function shareCashFlowImage() {
-    if (!exportedImageUrl) return;
-    try {
-      const blob = await (await fetch(exportedImageUrl)).blob();
-      const filename = `현금흐름표_${selectedMonth}.png`;
-      const file = new File([blob], filename, { type: "image/png" });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: filename });
-      }
-    } catch (e) {
-      // 사용자가 공유를 취소한 경우 등은 조용히 무시해요
     }
   }
 
@@ -3170,11 +3170,11 @@ function HouseholdBudget() {
           </div>
           </div>
           <button
-            onClick={exportCashFlowImage}
+            onClick={shareCashFlowImage}
             disabled={exportingImage}
             className="mt-3 w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 disabled:opacity-60"
           >
-            {exportingImage ? <><Loader2 size={14} className="animate-spin" /> 이미지 만드는 중...</> : <><Camera size={14} /> 이미지로 저장</>}
+            {exportingImage ? <><Loader2 size={14} className="animate-spin" /> 이미지 준비 중...</> : <><Share2 size={14} /> 공유하기</>}
           </button>
           </>
         )}
@@ -4312,21 +4312,16 @@ function HouseholdBudget() {
                 <X size={18} />
               </button>
             </div>
-            <p className="text-xs text-slate-500 px-4 mt-1 mb-3 shrink-0">이미지를 길게 눌러서 사진에 저장하거나, 아래 버튼으로 공유할 수 있어요.</p>
+            <p className="text-xs text-slate-500 px-4 mt-1 mb-3 shrink-0">이 기기에서는 바로 공유하기가 지원되지 않아서 대신 이미지를 보여드려요. 길게 누르거나 마우스 오른쪽 버튼으로 저장해주세요.</p>
             <div className="relative min-h-0 flex-1">
               <div className="absolute inset-0 px-4 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
                 <img src={exportedImageUrl} alt="현금흐름표" className="w-full rounded-xl border border-slate-200" />
               </div>
             </div>
-            <div className="flex gap-2 p-4 shrink-0">
-              <button onClick={() => setExportedImageUrl(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+            <div className="p-4 shrink-0">
+              <button onClick={() => setExportedImageUrl(null)} className="w-full py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
                 닫기
               </button>
-              {typeof navigator !== "undefined" && navigator.share && (
-                <button onClick={shareCashFlowImage} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium">
-                  <Share2 size={14} /> 공유하기
-                </button>
-              )}
             </div>
           </div>
         </div>
