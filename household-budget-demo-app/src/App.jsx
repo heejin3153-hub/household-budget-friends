@@ -4426,7 +4426,7 @@ function HouseholdBudget() {
             </div>
             <div className="relative min-h-0 flex-1 mt-2">
               <div className="absolute inset-0 px-5 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
-                <img src={exportedImageUrl} alt="현금흐름표" className="w-full rounded-xl border border-slate-200 mb-4" />
+                <img src={exportedImageUrl} alt="현금흐름표" className="w-full mb-4" />
               </div>
             </div>
             {exportShareFile && (
