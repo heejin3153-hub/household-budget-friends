@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar, ComposedChart } from "recharts";
 import {
   Trash2, Plus, TrendingUp, TrendingDown, Wallet, Loader2,
-  PiggyBank, Target, ChevronDown, ChevronUp, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut, Bell,
+  PiggyBank, Target, ChevronDown, ChevronUp, Download, Upload, Pencil, X, MoreVertical, Search, CheckCircle2, RotateCcw, LogOut, Bell, Camera, Share2,
 } from "lucide-react";
 import { storageGet, storageSet, setCurrentUid, signInWithGoogle, signOutUser, watchAuthState, setupOrVerifyPin, checkPinExists } from "./firebase";
 import {
@@ -318,10 +318,43 @@ function HouseholdBudget() {
   }, [toast, toastType]);
   const [lastFailedSave, setLastFailedSave] = useState(null);
   const [savingTx, setSavingTx] = useState(false);
+  const cashFlowRef = useRef(null);
+  const [exportedImageUrl, setExportedImageUrl] = useState(null);
+  const [exportingImage, setExportingImage] = useState(false);
 
   useEffect(() => {
     import("xlsx"); // 엑셀 백업/불러오기 기능을 미리 로드해서, 처음 눌러도 바로 동작하게 해요
+    import("html-to-image"); // 현금흐름표 이미지로 저장 기능을 미리 로드해서, 처음 눌러도 바로 동작하게 해요
   }, []);
+
+  async function exportCashFlowImage() {
+    if (exportingImage || !cashFlowRef.current) return;
+    setExportingImage(true);
+    try {
+      const { toPng } = await import("html-to-image");
+      const dataUrl = await toPng(cashFlowRef.current, { backgroundColor: "#ffffff", pixelRatio: 2 });
+      setExportedImageUrl(dataUrl);
+    } catch (e) {
+      console.error("cash flow image export error", e);
+      setToast("이미지 생성에 실패했어요.");
+    } finally {
+      setExportingImage(false);
+    }
+  }
+
+  async function shareCashFlowImage() {
+    if (!exportedImageUrl) return;
+    try {
+      const blob = await (await fetch(exportedImageUrl)).blob();
+      const filename = `현금흐름표_${selectedMonth}.png`;
+      const file = new File([blob], filename, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+      }
+    } catch (e) {
+      // 사용자가 공유를 취소한 경우 등은 조용히 무시해요
+    }
+  }
 
   // 아래 값들은 groups/incomeCategories state로부터 매 렌더마다 계산돼요 (카테고리 관리에서 직접 수정 가능)
   const LIVING_CATEGORIES = groups.find((g) => g.id === "living")?.categories || [];
@@ -3018,6 +3051,8 @@ function HouseholdBudget() {
           </>
         ) : (
           <>
+          <div ref={cashFlowRef} className="bg-white">
+          <div className="text-xs font-semibold text-slate-500 mb-2">{formatCycleLabel(selectedMonth, settings.cycleStartDay)} 현금흐름표</div>
           <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 mb-2.5">
             <h4 className="text-xs font-bold text-emerald-700 mb-1.5">🟢 수입</h4>
             {cashFlowStatement.incomeItems.length === 0 ? (
@@ -3133,6 +3168,14 @@ function HouseholdBudget() {
               {formatWon(cashFlowStatement.net)}
             </span>
           </div>
+          </div>
+          <button
+            onClick={exportCashFlowImage}
+            disabled={exportingImage}
+            className="mt-3 w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 disabled:opacity-60"
+          >
+            {exportingImage ? <><Loader2 size={14} className="animate-spin" /> 이미지 만드는 중...</> : <><Camera size={14} /> 이미지로 저장</>}
+          </button>
           </>
         )}
       </div>
@@ -4251,6 +4294,42 @@ function HouseholdBudget() {
             })()}
           </div>
         </>
+      )}
+
+      {exportedImageUrl && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setExportedImageUrl(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-lg max-w-sm w-full flex flex-col overflow-hidden"
+            style={{ height: Math.round(viewportH * 0.85) + "px" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 pt-4 shrink-0">
+              <h3 className="text-sm font-semibold text-slate-800">이미지로 저장</h3>
+              <button onClick={() => setExportedImageUrl(null)} className="text-slate-400 hover:text-slate-700">
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 px-4 mt-1 mb-3 shrink-0">이미지를 길게 눌러서 사진에 저장하거나, 아래 버튼으로 공유할 수 있어요.</p>
+            <div className="relative min-h-0 flex-1">
+              <div className="absolute inset-0 px-4 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
+                <img src={exportedImageUrl} alt="현금흐름표" className="w-full rounded-xl border border-slate-200" />
+              </div>
+            </div>
+            <div className="flex gap-2 p-4 shrink-0">
+              <button onClick={() => setExportedImageUrl(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+                닫기
+              </button>
+              {typeof navigator !== "undefined" && navigator.share && (
+                <button onClick={shareCashFlowImage} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium">
+                  <Share2 size={14} /> 공유하기
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {showWhatsNew && (
