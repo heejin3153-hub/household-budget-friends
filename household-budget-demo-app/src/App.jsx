@@ -297,7 +297,7 @@ function HouseholdBudget() {
   const [instName, setInstName] = useState("");
   const [instTotal, setInstTotal] = useState("");
   const [instMonths, setInstMonths] = useState("");
-  const [instStartMonth, setInstStartMonth] = useState(todayStr().slice(0, 7));
+  const [instStartDate, setInstStartDate] = useState(todayStr());
   // 할부 카테고리 초기값을 첫 유효 카테고리로 설정
   const defaultInstCategory = useMemo(() => {
     const firstCat = groups[0]?.categories[0];
@@ -1569,8 +1569,8 @@ function HouseholdBudget() {
     const total = Number(instTotal);
     const months = Number(instMonths);
     if (!instName.trim() || !total || total <= 0 || !months || months <= 0) return;
-    const [startY, startM] = instStartMonth.split("-").map(Number);
-    const items = splitInstallment({ total, months, startYear: startY, startMonth: startM, name: instName.trim() });
+    const [startY, startM, startD] = instStartDate.split("-").map(Number);
+    const items = splitInstallment({ total, months, startYear: startY, startMonth: startM, startDay: startD, name: instName.trim() });
     const newTxs = items.map((it, i) => ({
       id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
       type: "expense",
@@ -2875,10 +2875,10 @@ function HouseholdBudget() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[11px] text-slate-500 block mb-1">시작 월</label>
+                <label className="text-[11px] text-slate-500 block mb-1">시작일</label>
                 <DatePickerField
-                  value={`${instStartMonth}-01`}
-                  onChange={(d) => setInstStartMonth(d.slice(0, 7))}
+                  value={instStartDate}
+                  onChange={(d) => setInstStartDate(d)}
                 />
               </div>
               <div>
@@ -2901,7 +2901,7 @@ function HouseholdBudget() {
               const remainder = Number(instTotal) - monthly * Number(instMonths);
               return (
                 <p className="text-xs text-slate-500">
-                  {instStartMonth}월부터 {instMonths}개월간 매달 {formatWon(monthly)}씩
+                  {formatDateDisplay(instStartDate)}부터 매달 같은 날짜로 {instMonths}개월간 {formatWon(monthly)}씩
                   {remainder > 0 ? ` (마지막 달만 ${formatWon(monthly + remainder)})` : ""}
                   , 총 {formatWon(Number(instTotal))} 등록돼요.
                 </p>

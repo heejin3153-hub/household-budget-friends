@@ -60,7 +60,7 @@ export function monthsBetween(fromStr, toStr) {
 }
 
 // 할부 총액을 개월 수만큼 나눠요. 나머지(딱 안 나눠떨어지는 금액)는 마지막 달에 몰아줘요.
-export function splitInstallment({ total, months, startYear, startMonth, name }) {
+export function splitInstallment({ total, months, startYear, startMonth, startDay, name }) {
   const monthly = Math.floor(total / months);
   const remainder = total - monthly * months;
   const items = [];
@@ -68,8 +68,9 @@ export function splitInstallment({ total, months, startYear, startMonth, name })
     let y = startYear, m = startMonth + i;
     while (m > 12) { m -= 12; y += 1; }
     const isLast = i === months - 1;
+    const day = Math.min(startDay || 1, daysInMonthNum(y, m));
     items.push({
-      date: `${y}-${String(m).padStart(2, "0")}-01`,
+      date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
       amount: isLast ? monthly + remainder : monthly,
       memo: `${name} (${i + 1}/${months})`,
     });
