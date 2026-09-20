@@ -251,6 +251,7 @@ function HouseholdBudget() {
   const [draftIncomeGroups, setDraftIncomeGroups] = useState([]);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [reorderMode, setReorderMode] = useState(false);
+  const [pendingCategoryImport, setPendingCategoryImport] = useState(null);
   const [newCatText, setNewCatText] = useState({});
   const [newGroupName, setNewGroupName] = useState("");
   const [viewportH, setViewportH] = useState(typeof window !== "undefined" ? window.innerHeight : 700);
@@ -1692,6 +1693,24 @@ function HouseholdBudget() {
         XLSX.utils.book_append_sheet(wb, liabWs, "부채");
       }
 
+      // 카테고리 설정 (그룹 구조·이름·순서·예산) — 그룹에 카테고리가 하나도 없으면 빈 카테고리 행을 하나 넣어서 그룹 자체는 남겨요
+      const categoryRows = [];
+      groups.forEach((g, gi) => {
+        const base = { 그룹구분: "지출", 그룹순서: gi, 그룹ID: g.id, 그룹이름: g.label, 예산사용: g.budgetEnabled ? "Y" : "N", 예산금액: g.budget || 0 };
+        if ((g.categories || []).length === 0) categoryRows.push({ ...base, 카테고리순서: "", 카테고리이름: "" });
+        else g.categories.forEach((c, ci) => categoryRows.push({ ...base, 카테고리순서: ci, 카테고리이름: c }));
+      });
+      incomeGroups.forEach((g, gi) => {
+        const base = { 그룹구분: "수입", 그룹순서: gi, 그룹ID: g.id, 그룹이름: g.label, 예산사용: "", 예산금액: "" };
+        if ((g.categories || []).length === 0) categoryRows.push({ ...base, 카테고리순서: "", 카테고리이름: "" });
+        else g.categories.forEach((c, ci) => categoryRows.push({ ...base, 카테고리순서: ci, 카테고리이름: c }));
+      });
+      if (categoryRows.length > 0) {
+        const categoryWs = XLSX.utils.json_to_sheet(categoryRows);
+        categoryWs["!cols"] = [{ wch: 8 }, { wch: 8 }, { wch: 16 }, { wch: 16 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 16 }];
+        XLSX.utils.book_append_sheet(wb, categoryWs, "카테고리 설정");
+      }
+
       // 예산 (월별 그룹 예산)
       const budgetRows = [];
       Object.entries(monthlyBudgets || {}).sort().forEach(([month, byGroup]) => {
@@ -1741,6 +1760,43 @@ function HouseholdBudget() {
       if (rawGroup.includes("생활비")) return cat; // 식비/문화/기타는 생활비 쪽엔 접두어 없이 그대로
     }
     return cat;
+  }
+
+  // "카테고리 설정" 시트 행들을 그룹 구조로 재구성해요. 그룹ID를 기준으로 묶고,
+  // 그룹순서·카테고리순서로 원래 순서를 복원해요. 카테고리가 없는 그룹도(빈 행으로) 그대로 살려요.
+  function parseImportedCategoryGroups(rows) {
+    const expenseMap = new Map();
+    const incomeMap = new Map();
+    rows.forEach((r) => {
+      const groupId = String(r["그룹ID"] || "").trim();
+      const groupLabel = String(r["그룹이름"] || "").trim();
+      if (!groupId || !groupLabel) return;
+      const isIncome = String(r["그룹구분"] || "").trim() === "수입";
+      const target = isIncome ? incomeMap : expenseMap;
+      if (!target.has(groupId)) {
+        target.set(groupId, {
+          order: Number(r["그룹순서"]) || 0,
+          id: groupId,
+          label: groupLabel,
+          budgetEnabled: String(r["예산사용"] || "").trim().toUpperCase() === "Y",
+          budget: Number(r["예산금액"]) || 0,
+          cats: [],
+        });
+      }
+      const catName = String(r["카테고리이름"] || "").trim();
+      if (catName) {
+        target.get(groupId).cats.push({ order: Number(r["카테고리순서"]) || 0, name: catName });
+      }
+    });
+    const toGroups = (map, isExpense) => [...map.values()]
+      .sort((a, b) => a.order - b.order)
+      .map((g) => ({
+        id: g.id,
+        label: g.label,
+        categories: g.cats.sort((a, b) => a.order - b.order).map((c) => c.name),
+        ...(isExpense ? { budgetEnabled: g.budgetEnabled, budget: g.budget } : {}),
+      }));
+    return { groups: toGroups(expenseMap, true), incomeGroups: toGroups(incomeMap, false) };
   }
 
   async function handleImportExcel(e) {
@@ -1928,6 +1984,19 @@ function HouseholdBudget() {
         settingsRestored = true;
       }
 
+      // 카테고리 설정 — 다른 항목과 달리 "합치기"가 아니라 "통째로 교체"라서, 바로 적용하지 않고
+      // 사용자에게 먼저 물어봐요 (지금 쓰고 있는 카테고리 구성이 사라질 수 있어서요).
+      let categoryImportAvailable = false;
+      const categorySheetName = wb.SheetNames.find((n) => n === "카테고리 설정");
+      if (categorySheetName) {
+        const categoryRows = XLSX.utils.sheet_to_json(wb.Sheets[categorySheetName], { defval: "" });
+        const parsedCategories = parseImportedCategoryGroups(categoryRows);
+        if (parsedCategories.groups.length > 0 || parsedCategories.incomeGroups.length > 0) {
+          setPendingCategoryImport(parsedCategories);
+          categoryImportAvailable = true;
+        }
+      }
+
       const summaryParts = [];
       if (newOnes.length > 0) summaryParts.push(`거래 ${newOnes.length}건`);
       if (recurAddedCount > 0) summaryParts.push(`정기지출 ${recurAddedCount}건`);
@@ -1937,7 +2006,7 @@ function HouseholdBudget() {
       if (budgetAddedCount > 0) summaryParts.push(`예산 ${budgetAddedCount}건`);
       if (settingsRestored) summaryParts.push("설정");
 
-      if (summaryParts.length === 0) {
+      if (summaryParts.length === 0 && !categoryImportAvailable) {
         setSaveError("엑셀에서 읽을 수 있는 내용이 없어요. 이전에 이 앱에서 내보낸 파일인지 확인해주세요.");
         return;
       }
@@ -1946,7 +2015,7 @@ function HouseholdBudget() {
         const ok = await persistTx([...newOnes, ...transactions]);
         if (!ok) return;
       }
-      setToast(`${summaryParts.join(", ")} 불러왔어요`);
+      if (summaryParts.length > 0) setToast(`${summaryParts.join(", ")} 불러왔어요`);
     } catch (err) {
       setSaveError("엑셀 파일을 읽는 데 실패했어요. 파일 형식을 확인해주세요.");
     } finally {
@@ -4401,6 +4470,34 @@ function HouseholdBudget() {
                 </>
               );
             })()}
+          </div>
+        </>
+      )}
+
+      {pendingCategoryImport && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-50" onClick={() => setPendingCategoryImport(null)} />
+          <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl p-5 shadow-lg max-w-sm mx-auto">
+            <h3 className="text-sm font-semibold text-slate-800 text-center mb-1">카테고리 설정도 불러올까요?</h3>
+            <p className="text-xs text-slate-500 text-center mb-3">백업 파일에 카테고리 그룹 설정이 들어있어요.</p>
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-4 leading-relaxed">
+              ⚠️ 불러오면 지금 쓰고 있는 카테고리 설정(그룹, 이름, 순서, 예산)이 전부 이 백업 파일 내용으로 교체돼요. 지금 직접 만들거나 수정한 카테고리가 있다면 사라져요. 이미 기록된 거래 내역 자체는 영향받지 않아요.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setPendingCategoryImport(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+                아니요, 그대로 둘게요
+              </button>
+              <button
+                onClick={() => {
+                  persistCategoryConfig(pendingCategoryImport.groups, pendingCategoryImport.incomeGroups);
+                  setPendingCategoryImport(null);
+                  setToast("카테고리 설정을 불러왔어요");
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-medium"
+              >
+                예, 덮어쓸게요
+              </button>
+            </div>
           </div>
         </>
       )}
