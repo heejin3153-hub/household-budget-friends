@@ -3698,6 +3698,10 @@ function HouseholdBudget() {
           </div>
           {categoryData.length > 0 ? (
             <>
+              <p className="text-xs text-slate-400 mb-2">
+                {pieGroupFilter === "전체" ? "전체 지출" : `${pieGroupFilter} 합계`}{" "}
+                <span className="text-slate-700 font-semibold">{formatWon(categoryData.reduce((s, c) => s + c.value, 0))}</span>
+              </p>
               <div style={{ width: "100%", height: 270 }}>
                 <ResponsiveContainer>
                   <PieChart margin={{ top: 24, right: 44, left: 44, bottom: 24 }}>
