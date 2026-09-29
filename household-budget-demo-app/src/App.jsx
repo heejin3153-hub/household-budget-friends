@@ -475,7 +475,6 @@ function HouseholdBudget() {
     if (showUpdateHistory) checkScrollBottom(historyScrollRef.current, setHistoryHasMore);
   }, [showUpdateHistory]);
   const [showRecordedMonths, setShowRecordedMonths] = useState(false);
-  const [reportMonth, setReportMonth] = useState(todayStr().slice(0, 7));
   const [balanceCardView, setBalanceCardView] = useState("summary"); // "summary" | "detail"
   const [pieGroupFilter, setPieGroupFilter] = useState("생활비");
   useEffect(() => {
@@ -539,7 +538,6 @@ function HouseholdBudget() {
           if (loadedSettings.defaultPieGroup) setPieGroupFilter(loadedSettings.defaultPieGroup);
           if (loadedSettings.cycleStartDay > 1) {
             setSelectedMonth(getCycleLabel(todayStr(), loadedSettings.cycleStartDay));
-            setReportMonth(getCycleLabel(todayStr(), loadedSettings.cycleStartDay));
           }
         }
       } catch (e) {}
@@ -1320,14 +1318,14 @@ function HouseholdBudget() {
 
   const balanceSheetSnapshot = useMemo(() => {
     const snapshots = assetData.monthlySnapshots || {};
-    const snap = getEffectiveAssetSnapshot(snapshots, reportMonth);
+    const snap = getEffectiveAssetSnapshot(snapshots, selectedMonth);
     if (!snap && loanData.loans.length === 0) return null;
     const items = snap ? snap.items || [] : [];
     const liabilities = snap ? snap.liabilities || [] : [];
     const totalAssets = items.reduce((s, a) => s + (Number(a.amount) || 0), 0);
 
-    const loanBalances = getEffectiveLoanBalances(loanData.monthlySnapshots, reportMonth, loanData.loans);
-    const [py, pm] = reportMonth.split("-").map(Number);
+    const loanBalances = getEffectiveLoanBalances(loanData.monthlySnapshots, selectedMonth, loanData.loans);
+    const [py, pm] = selectedMonth.split("-").map(Number);
     let prevY = py, prevM = pm - 1;
     if (prevM < 1) { prevM = 12; prevY -= 1; }
     const prevMonth = `${prevY}-${String(prevM).padStart(2, "0")}`;
@@ -1365,8 +1363,8 @@ function HouseholdBudget() {
       changeNote = `자산 ${formatWon(Math.abs(totalAssetsChange))} ${totalAssetsChange > 0 ? "증가" : "감소"}`;
     }
 
-    return { month: reportMonth, totalAssets, totalDebt, netWorth, items, liabilities, loanDetail, netWorthChange, changeNote };
-  }, [assetData.monthlySnapshots, reportMonth, loanData.loans, loanData.monthlySnapshots]);
+    return { month: selectedMonth, totalAssets, totalDebt, netWorth, items, liabilities, loanDetail, netWorthChange, changeNote };
+  }, [assetData.monthlySnapshots, selectedMonth, loanData.loans, loanData.monthlySnapshots]);
 
   const topGroupTransactions = useMemo(() => {
     let base = monthTx.filter((t) => t.type === "expense");
@@ -2041,7 +2039,7 @@ function HouseholdBudget() {
       <style>{`
         input, select, textarea { font-size: 16px !important; }
       `}</style>
-      <header className="mb-5 relative">
+      <header className="mb-5 sticky top-0 z-30 bg-slate-50 pt-4 -mt-4 pb-2 border-b border-slate-200/70">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             {editingTitle ? (
@@ -2063,7 +2061,15 @@ function HouseholdBudget() {
               </h1>
             )}
           </div>
-          <div className="relative shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="h-9 border border-slate-200 rounded-lg px-2 text-sm bg-white"
+            >
+              {monthOptions.map((m) => <option key={m} value={m}>{formatCycleLabel(m, settings.cycleStartDay)}</option>)}
+            </select>
+            <div className="relative">
             <button
               onClick={() => setShowHeaderMenu((s) => !s)}
               className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
@@ -2139,6 +2145,7 @@ function HouseholdBudget() {
                 </div>
               </>
             )}
+            </div>
           </div>
         </div>
       </header>
@@ -2635,13 +2642,7 @@ function HouseholdBudget() {
         <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
           <div className="flex items-center justify-between mb-1">
             <h3 className="text-sm font-semibold text-slate-700">월별 재무상태표</h3>
-            <select
-              value={reportMonth}
-              onChange={(e) => setReportMonth(e.target.value)}
-              className="h-8 border border-slate-200 rounded-lg px-2 text-xs bg-white"
-            >
-              {monthOptions.map((m) => <option key={m} value={m}>{formatCycleLabel(m, settings.cycleStartDay)}</option>)}
-            </select>
+            <span className="text-xs text-slate-400">{formatCycleLabel(selectedMonth, settings.cycleStartDay)}</span>
           </div>
           <p className="text-xs text-slate-400 mb-3">
             {balanceSheetSnapshot
@@ -2678,7 +2679,7 @@ function HouseholdBudget() {
 
           {balanceSheetSnapshot && balanceSheetSnapshot.items.length > 0 && (
             <div className="pt-2 border-t border-slate-100">
-              <h4 className="text-xs font-semibold text-slate-500 mb-1.5">자산 상세 ({formatCycleLabel(reportMonth, 1)} 기준)</h4>
+              <h4 className="text-xs font-semibold text-slate-500 mb-1.5">자산 상세 ({formatCycleLabel(selectedMonth, 1)} 기준)</h4>
               <ul className="space-y-1">
                 {balanceSheetSnapshot.items.map((a) => (
                   <li key={a.id} className="flex justify-between text-xs text-slate-600">
@@ -2691,7 +2692,7 @@ function HouseholdBudget() {
           )}
           {((balanceSheetSnapshot && balanceSheetSnapshot.loanDetail.length > 0) || (balanceSheetSnapshot && balanceSheetSnapshot.liabilities.length > 0)) && (
             <div className="pt-2 mt-2 border-t border-slate-100">
-              <h4 className="text-xs font-semibold text-slate-500 mb-1.5">부채 상세 ({formatCycleLabel(reportMonth, 1)} 기준)</h4>
+              <h4 className="text-xs font-semibold text-slate-500 mb-1.5">부채 상세 ({formatCycleLabel(selectedMonth, 1)} 기준)</h4>
               <ul className="space-y-1.5">
                 {balanceSheetSnapshot.loanDetail.map((l) => (
                   <li key={l.id} className="text-xs">
@@ -3127,10 +3128,7 @@ function HouseholdBudget() {
 
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-semibold text-slate-900">월별 요약</h2>
-        <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white">
-          {monthOptions.map((m) => <option key={m} value={m}>{formatCycleLabel(m, settings.cycleStartDay)}</option>)}
-        </select>
+        <span className="text-sm text-slate-400">{formatCycleLabel(selectedMonth, settings.cycleStartDay)}</span>
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
