@@ -421,7 +421,7 @@ function HouseholdBudget() {
   const [showLoanDetails, setShowLoanDetails] = useState(false);
   const [showTxDetails, setShowTxDetails] = useState(true);
   const [visibleCount, setVisibleCount] = useState(20);
-  const [viewMode, setViewMode] = useState("grouped");
+  const [viewMode, setViewMode] = useState("list");
   const [expandedCats, setExpandedCats] = useState(new Set());
   function toggleCatExpand(key) {
     setExpandedCats((prev) => {
@@ -435,6 +435,12 @@ function HouseholdBudget() {
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterYear, setFilterYear] = useState(todayStr().slice(0, 4));
   const [filterMonth, setFilterMonth] = useState(todayStr().slice(5, 7));
+  // 상단 월 토글(selectedMonth)이 바뀌면 "거래 내역" 카드의 연도·월 필터도 같이 따라가요.
+  useEffect(() => {
+    const [y, m] = selectedMonth.split("-");
+    setFilterYear(y);
+    setFilterMonth(m);
+  }, [selectedMonth]);
   const [sortBy, setSortBy] = useState("date_desc");
   const [page, setPage] = useState("home"); // "home" | "stats"
   const [statsPeriod, setStatsPeriod] = useState("6"); // "3" | "6" | "12" | "all" | "custom"
@@ -2052,11 +2058,11 @@ function HouseholdBudget() {
                   if (e.key === "Enter") commitTitle();
                   if (e.key === "Escape") setEditingTitle(false);
                 }}
-                className="text-2xl font-bold text-slate-900 bg-transparent border-b-2 border-emerald-400 focus:outline-none w-full"
+                className="text-lg font-bold text-slate-900 bg-transparent border-b-2 border-emerald-400 focus:outline-none w-full"
               />
             ) : (
-              <h1 className="text-2xl font-bold flex items-center gap-2 text-slate-900">
-                <Wallet size={24} className="text-emerald-600 shrink-0" />
+              <h1 className="text-lg font-bold flex items-center gap-2 text-slate-900">
+                <Wallet size={20} className="text-emerald-600 shrink-0" />
                 <span className="truncate">{settings.title || "우리집 가계부"}</span>
               </h1>
             )}
