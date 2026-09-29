@@ -655,7 +655,7 @@ function HouseholdBudget() {
     setLoanData(nextWithSnapshot);
     debouncedSave(LOANS_KEY, nextWithSnapshot, "대출 정보 저장에 실패했어요.");
   }
-  function saveLoanHistoryBalance(loanId, month, balanceValue) {
+  function saveLoanHistoryBalance(loanId, month, balanceValue, opts = {}) {
     const effectiveNow = getEffectiveLoanBalances(loanData.monthlySnapshots, month, loanData.loans);
     const monthSnapshot = { ...effectiveNow, [loanId]: Number(balanceValue) || 0 };
     const nextSnapshots = { ...(loanData.monthlySnapshots || {}), [month]: monthSnapshot };
@@ -666,7 +666,7 @@ function HouseholdBudget() {
     const next = { ...loanData, loans: nextLoans, monthlySnapshots: nextSnapshots };
     setLoanData(next);
     debouncedSave(LOANS_KEY, next, "대출 정보 저장에 실패했어요.");
-    setToast(`${formatCycleLabel(month, 1)} 대출 잔액을 저장했어요`);
+    if (!opts.silent) setToast(`${formatCycleLabel(month, 1)} 대출 잔액을 저장했어요`);
   }
   function persistAssetSnapshot(nextItems, nextLiabilities) {
     const next = {
@@ -1484,8 +1484,14 @@ function HouseholdBudget() {
     return { income, expense, savings, principal, interest, net: income - expense };
   }, [transactions, currentYear]);
 
+  // 홈 화면 "월별 요약" 달 선택(selectedMonth)에 맞춰서 대출 잔액도 그 달 기준으로 보여줘요 —
+  // 자산·부채 탭이랑 똑같은 방식이라, 다른 달을 보고 있을 땐 그 달에 저장해둔(또는 이월된) 잔액이 나와요.
+  const selectedMonthLoanBalances = useMemo(() => {
+    return getEffectiveLoanBalances(loanData.monthlySnapshots, selectedMonth, loanData.loans);
+  }, [loanData.monthlySnapshots, loanData.loans, selectedMonth]);
+
   const loanTotals = useMemo(() => {
-    const totalBalance = loanData.loans.reduce((s, l) => s + Number(l.balance || 0), 0);
+    const totalBalance = loanData.loans.reduce((s, l) => s + Number(selectedMonthLoanBalances[l.id] ?? l.balance ?? 0), 0);
     const totalOriginal = loanData.loans.reduce((s, l) => s + Number(l.originalBalance || 0), 0);
     const paidOff = totalOriginal - totalBalance;
     const pct = totalOriginal > 0 ? Math.min((paidOff / totalOriginal) * 100, 100) : 0;
@@ -1496,14 +1502,12 @@ function HouseholdBudget() {
       monthlyNeeded = monthsLeft > 0 ? totalBalance / monthsLeft : totalBalance;
     }
     return { totalBalance, totalOriginal, paidOff, pct, monthsLeft, monthlyNeeded };
-  }, [loanData]);
+  }, [loanData, selectedMonthLoanBalances]);
 
-  async function updateLoanBalance(id, newBalance) {
-    const next = {
-      ...loanData,
-      loans: loanData.loans.map((l) => (l.id === id ? { ...l, balance: Number(newBalance) || 0 } : l)),
-    };
-    await persistLoans(next);
+  // "월별 요약"에서 고른 달(selectedMonth) 기준으로 잔액을 저장해요 — 지금 보고 있는 달이 실제
+  // 오늘 달이면 홈 카드 값도 같이 바뀌고, 과거·미래 달이면 그 달 기록만 바뀌어요 (자산·부채 탭과 동일).
+  function updateLoanBalance(id, newBalance) {
+    saveLoanHistoryBalance(id, selectedMonth, newBalance, { silent: true });
   }
   async function updateLoanName(id, newName) {
     const next = {
@@ -3782,9 +3786,14 @@ function HouseholdBudget() {
       {settings.loanModeEnabled !== false && (
       <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-5">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <Target size={16} className="text-purple-500" /> 대출 상환 목표
-          </h3>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+              <Target size={16} className="text-purple-500" /> 대출 상환 목표
+            </h3>
+            {selectedMonth !== todayStr().slice(0, 7) && (
+              <p className="text-[11px] text-slate-400 mt-0.5">{formatCycleLabel(selectedMonth, settings.cycleStartDay)} 기준으로 보고 있어요</p>
+            )}
+          </div>
           <div className="relative">
             <button
               onClick={() => setShowLoanMenu((s) => !s)}
@@ -3935,11 +3944,13 @@ function HouseholdBudget() {
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-slate-400 block mb-0.5">현재 잔액</label>
+                  <label className="text-[11px] text-slate-400 block mb-0.5">
+                    {selectedMonth === todayStr().slice(0, 7) ? "현재 잔액" : `${Number(selectedMonth.slice(5))}월 잔액`}
+                  </label>
                   <input
                     type="text"
                     inputMode="numeric"
-                    value={formatNumberInput(l.balance)}
+                    value={formatNumberInput(selectedMonthLoanBalances[l.id] ?? l.balance)}
                     onChange={(e) => updateLoanBalance(l.id, parseNumberInput(e.target.value))}
                     disabled={l.completed}
                     className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-right disabled:bg-slate-50 disabled:text-slate-400"
