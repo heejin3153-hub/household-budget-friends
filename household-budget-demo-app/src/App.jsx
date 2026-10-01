@@ -952,8 +952,8 @@ function HouseholdBudget() {
     setDraftGroups(draftGroups.map((g) => (g.id === groupId ? { ...g, categories: g.categories.filter((c) => c !== catName) } : g)));
     setPendingDelete(null);
   }
-  function renameCategoryInGroup(groupId, oldName, newName) {
-    setDraftGroups(draftGroups.map((g) => (g.id === groupId ? { ...g, categories: g.categories.map((c) => (c === oldName ? newName : c)) } : g)));
+  function renameCategoryInGroup(groupId, index, newName) {
+    setDraftGroups(draftGroups.map((g) => (g.id === groupId ? { ...g, categories: g.categories.map((c, ci) => (ci === index ? newName : c)) } : g)));
   }
   function moveCategoryInGroup(groupId, catName, dir) {
     setDraftGroups(draftGroups.map((g) => {
@@ -992,8 +992,8 @@ function HouseholdBudget() {
     setDraftIncomeGroups(draftIncomeGroups.map((g) => (g.id === groupId ? { ...g, categories: g.categories.filter((c) => c !== catName) } : g)));
     setPendingDelete(null);
   }
-  function renameCategoryInIncomeGroup(groupId, oldName, newName) {
-    setDraftIncomeGroups(draftIncomeGroups.map((g) => (g.id === groupId ? { ...g, categories: g.categories.map((c) => (c === oldName ? newName : c)) } : g)));
+  function renameCategoryInIncomeGroup(groupId, index, newName) {
+    setDraftIncomeGroups(draftIncomeGroups.map((g) => (g.id === groupId ? { ...g, categories: g.categories.map((c, ci) => (ci === index ? newName : c)) } : g)));
   }
   function moveCategoryInIncomeGroup(groupId, catName, dir) {
     setDraftIncomeGroups(draftIncomeGroups.map((g) => {
@@ -3508,7 +3508,7 @@ function HouseholdBudget() {
 
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {g.categories.map((c, i) => (
-                  <span key={c} className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-full pl-2.5 pr-1.5 py-1 text-xs text-slate-600">
+                  <span key={i} className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-full pl-2.5 pr-1.5 py-1 text-xs text-slate-600">
                     {reorderMode ? (
                       <>
                         <button
@@ -3531,7 +3531,7 @@ function HouseholdBudget() {
                       <>
                         <input
                           value={c}
-                          onChange={(e) => renameCategoryInGroup(g.id, c, e.target.value)}
+                          onChange={(e) => renameCategoryInGroup(g.id, i, e.target.value)}
                           className="bg-transparent border-0 focus:outline-none text-xs w-auto"
                           style={{ width: `${Math.max(c.length * 1.8 + 1, 3)}ch` }}
                         />
@@ -3588,7 +3588,7 @@ function HouseholdBudget() {
 
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {g.categories.map((c, i) => (
-                  <span key={c} className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-full pl-2.5 pr-1.5 py-1 text-xs text-slate-600">
+                  <span key={i} className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-full pl-2.5 pr-1.5 py-1 text-xs text-slate-600">
                     {reorderMode ? (
                       <>
                         <button
@@ -3611,7 +3611,7 @@ function HouseholdBudget() {
                       <>
                         <input
                           value={c}
-                          onChange={(e) => renameCategoryInIncomeGroup(g.id, c, e.target.value)}
+                          onChange={(e) => renameCategoryInIncomeGroup(g.id, i, e.target.value)}
                           className="bg-transparent border-0 focus:outline-none text-xs w-auto"
                           style={{ width: `${Math.max(c.length * 1.8 + 1, 3)}ch` }}
                         />
