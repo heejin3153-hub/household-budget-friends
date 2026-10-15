@@ -29,6 +29,17 @@ const ASSETS_KEY = "household-budget-assets";
 // 헤더 메뉴의 "업데이트 내역"에서는 전체가 날짜별로 다 보여요.
 const UPDATE_HISTORY = [
   {
+    date: "2026-10-15",
+    items: [
+      {
+        emoji: "🔁",
+        title: "정기지출, 모든 지출 카테고리로 등록 가능",
+        body: `정기지출을 추가하거나 수정할 때 카테고리를 "정기 지출" 그룹 것만이 아니라 전체 지출 카테고리 중에서 고를 수 있어요. 그룹별로 묶여서 보여요.`,
+        note: `예를 들어 매달 나가는 저축/투자나 대출상환도 정기지출 체크리스트에 바로 등록할 수 있어요. 기존에 등록한 정기지출은 그대로예요.`,
+      },
+    ],
+  },
+  {
     date: "2026-09-29",
     items: [
       {
@@ -408,7 +419,8 @@ function HouseholdBudget() {
   // 아래 값들은 groups/incomeCategories state로부터 매 렌더마다 계산돼요 (카테고리 관리에서 직접 수정 가능)
   const LIVING_CATEGORIES = groups.find((g) => g.id === "living")?.categories || [];
   const ALLOWANCE_CATEGORIES = groups.find((g) => g.id === "allowance")?.categories || [];
-  const FIXED_CATEGORIES = groups.find((g) => g.id === "fixed")?.categories || [];
+  // 정기지출은 "정기 지출" 그룹 카테고리가 맨 위에 오고, 나머지 지출 그룹 카테고리도 그룹별로 골라서 쓸 수 있어요
+  const RECURRING_CATEGORY_GROUPS = [...groups.filter((g) => g.id === "fixed"), ...groups.filter((g) => g.id !== "fixed")].filter((g) => g.categories.length > 0);
   const OTHER_EXPENSE_CATEGORIES = groups.find((g) => g.id === "other")?.categories || [];
   const EXPENSE_GROUPS = groups.map((g) => ({ label: g.label, items: g.categories }));
   const INCOME_CATEGORIES = incomeGroups.flatMap((g) => g.categories);
@@ -2908,7 +2920,11 @@ function HouseholdBudget() {
                     onChange={(e) => setNewRecurCategory(e.target.value)}
                     className="border border-slate-200 rounded-lg px-2 py-2 text-sm bg-white"
                   >
-                    {FIXED_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {RECURRING_CATEGORY_GROUPS.map((g) => (
+                      <optgroup key={g.id} label={g.label}>
+                        {g.categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </optgroup>
+                    ))}
                   </select>
                   <input
                     type="text"
@@ -4868,7 +4884,11 @@ function HouseholdBudget() {
                           onChange={(e) => setRecurDraftCategory(e.target.value)}
                           className="w-full h-11 box-border border border-slate-200 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
                         >
-                          {FIXED_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                          {RECURRING_CATEGORY_GROUPS.map((g) => (
+                      <optgroup key={g.id} label={g.label}>
+                        {g.categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </optgroup>
+                    ))}
                         </select>
                       </div>
                       <div>
