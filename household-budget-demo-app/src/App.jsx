@@ -1478,6 +1478,19 @@ function HouseholdBudget() {
 
   const pagedTx = useMemo(() => displayedTx.slice(0, visibleCount), [displayedTx, visibleCount]);
 
+  // 지금 목록(검색·필터 결과 전체)을 월별로 묶은 수입·지출 합계 — 목록의 월 구분(정산 사이클)과 같은 기준이에요
+  const displayedMonthlyTotals = useMemo(() => {
+    const map = new Map();
+    displayedTx.forEach((t) => {
+      const label = getCycleLabel(t.date, settings.cycleStartDay);
+      if (!map.has(label)) map.set(label, { label, income: 0, expense: 0 });
+      const m = map.get(label);
+      if (t.type === "income") m.income += t.amount; else m.expense += t.amount;
+    });
+    const rows = [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+    return sortBy === "date_asc" ? rows : rows.reverse();
+  }, [displayedTx, settings.cycleStartDay, sortBy]);
+
   function displayGroupLabel(cat) {
     const g = EXPENSE_GROUPS.find((grp) => grp.items.includes(cat));
     return g ? g.label : "기타";
@@ -4136,6 +4149,20 @@ function HouseholdBudget() {
             <option value="amount_asc">금액 작은순</option>
           </select>
         </div>
+
+        {displayedMonthlyTotals.length > 0 && (
+          <div className="bg-slate-50 rounded-lg px-2.5 py-1.5 mb-3 space-y-0.5 max-h-28 overflow-y-auto">
+            {displayedMonthlyTotals.map((m) => (
+              <div key={m.label} className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                <span className="shrink-0">{formatCycleLabel(m.label, settings.cycleStartDay)}</span>
+                <span className="flex items-center gap-2 tabular-nums">
+                  {m.income !== 0 && <span className="text-emerald-600">수입 +{formatWon(m.income)}</span>}
+                  {m.expense !== 0 && <span className={m.expense < 0 ? "text-emerald-600" : "text-red-500"}>지출 {m.expense < 0 ? "+" : "-"}{formatWon(Math.abs(m.expense))}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {viewMode === "grouped" ? (
           displayedTx.length === 0 ? (
