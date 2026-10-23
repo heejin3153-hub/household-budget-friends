@@ -147,6 +147,15 @@ function getLoanCreationMonth(loanId) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// 상환완료한 대출은 완료한 달부터 이후 모든 달의 잔액이 0원이에요 (그 달 이후에 따로 저장해둔 잔액이 있어도요)
+// 예전에 완료 처리해서 완료한 달이 기록돼 있지 않으면, 잔액이 처음 0원으로 저장된 달을 완료한 달로 봐요
+function getLoanCompletedMonth(loan, snapshots) {
+  if (!loan.completed) return null;
+  if (loan.completedMonth) return loan.completedMonth;
+  const zeroMonth = Object.keys(snapshots).sort().find((m) => snapshots[m] && snapshots[m][loan.id] === 0);
+  return zeroMonth || null;
+}
+
 function getEffectiveLoanBalances(monthlySnapshots, month, loans) {
   const snapshots = monthlySnapshots || {};
   const exact = snapshots[month];
@@ -155,6 +164,11 @@ function getEffectiveLoanBalances(monthlySnapshots, month, loans) {
   const sourceBalances = source ? snapshots[source] : {};
   const result = {};
   loans.forEach((l) => {
+    const completedMonth = getLoanCompletedMonth(l, snapshots);
+    if (completedMonth && month >= completedMonth) {
+      result[l.id] = 0;
+      return;
+    }
     if (source && sourceBalances[l.id] != null) {
       result[l.id] = sourceBalances[l.id]; // 직접 기록해둔 값이 있으면 항상 이게 우선이에요
       return;
@@ -1597,9 +1611,10 @@ function HouseholdBudget() {
         if (l.id !== id) return l;
         const nowCompleted = !l.completed;
         if (nowCompleted) {
-          return { ...l, completed: true, preCompleteBalance: l.balance, balance: 0 };
+          return { ...l, completed: true, completedMonth: todayStr().slice(0, 7), preCompleteBalance: l.balance, balance: 0 };
         }
-        return { ...l, completed: false, balance: l.preCompleteBalance ?? l.balance };
+        const { completedMonth, ...rest } = l;
+        return { ...rest, completed: false, balance: l.preCompleteBalance ?? l.balance };
       }),
     };
     await persistLoans(next);
