@@ -552,6 +552,17 @@ function HouseholdBudget() {
 
   useEffect(() => {
     (async () => {
+      // 7개 데이터를 한꺼번에 요청해두고(동시에 가져와요), 아래에서는 예전과 같은 순서로 하나씩 처리해요.
+      // 순서대로 하나씩 요청하면 요청 수만큼 대기 시간이 쌓여서 느렸어요.
+      const fetched = {
+        c: storageGet(CATEGORY_CONFIG_KEY),
+        tx: storageGet(TX_KEY),
+        s: storageGet(SETTINGS_KEY),
+        l: storageGet(LOANS_KEY),
+        r: storageGet(RECURRING_KEY),
+        b: storageGet(BUDGETS_KEY),
+        a: storageGet(ASSETS_KEY),
+      };
       // 카테고리 그룹을 먼저 불러와서, 지금 실제로 쓰이고 있는 카테고리 이름은
       // 예전 이름 자동 이관(CATEGORY_RENAME_MAP) 대상에서 제외해요.
       // (예: 예전엔 "생활용품"→"생활"로 자동 이관됐는데, 사용자가 카테고리 관리에서
@@ -561,7 +572,7 @@ function HouseholdBudget() {
         ...DEFAULT_INCOME_GROUPS.flatMap((g) => g.categories),
       ]);
       try {
-        const cRes = await storageGet(CATEGORY_CONFIG_KEY);
+        const cRes = await fetched.c;
         if (cRes && cRes.value) {
           const parsed = JSON.parse(cRes.value);
           if (parsed.groups) {
@@ -579,7 +590,7 @@ function HouseholdBudget() {
         }
       } catch (e) {}
       try {
-        const txRes = await storageGet(TX_KEY);
+        const txRes = await fetched.tx;
         if (txRes && txRes.value) {
           const loaded = JSON.parse(txRes.value);
           let changed = false;
@@ -597,7 +608,7 @@ function HouseholdBudget() {
         }
       } catch (e) {}
       try {
-        const sRes = await storageGet(SETTINGS_KEY);
+        const sRes = await fetched.s;
         if (sRes && sRes.value) {
           const loadedSettings = JSON.parse(sRes.value);
           if (!loadedSettings.cycleStartDay) loadedSettings.cycleStartDay = 1;
@@ -609,7 +620,7 @@ function HouseholdBudget() {
         }
       } catch (e) {}
       try {
-        const lRes = await storageGet(LOANS_KEY);
+        const lRes = await fetched.l;
         if (lRes && lRes.value) {
           const parsed = JSON.parse(lRes.value);
           if (!parsed.monthlySnapshots) {
@@ -626,7 +637,7 @@ function HouseholdBudget() {
         }
       } catch (e) {}
       try {
-        const rRes = await storageGet(RECURRING_KEY);
+        const rRes = await fetched.r;
         if (rRes && rRes.value) {
           const loadedR = JSON.parse(rRes.value);
           let rChanged = false;
@@ -644,11 +655,11 @@ function HouseholdBudget() {
         }
       } catch (e) {}
       try {
-        const bRes = await storageGet(BUDGETS_KEY);
+        const bRes = await fetched.b;
         if (bRes && bRes.value) setMonthlyBudgets(JSON.parse(bRes.value));
       } catch (e) {}
       try {
-        const aRes = await storageGet(ASSETS_KEY);
+        const aRes = await fetched.a;
         if (aRes && aRes.value) {
           const parsed = JSON.parse(aRes.value);
           if (parsed.monthlySnapshots) {
