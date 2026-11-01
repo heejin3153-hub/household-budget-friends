@@ -306,6 +306,9 @@ function HouseholdBudget() {
   const [budgetEditMode, setBudgetEditMode] = useState(false);
   const [showBudgetMenu, setShowBudgetMenu] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState("");
+  // 월별 예산 메모 { "2026-11": { 그룹id: "메모" } } — 예산 문서 안에 _notes 칸으로 같이 저장해요
+  const [budgetNotes, setBudgetNotes] = useState({});
+  const [budgetMemoDraft, setBudgetMemoDraft] = useState("");
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [draftGroups, setDraftGroups] = useState([]);
   const [draftIncomeGroups, setDraftIncomeGroups] = useState([]);
@@ -656,7 +659,11 @@ function HouseholdBudget() {
       } catch (e) {}
       try {
         const bRes = await fetched.b;
-        if (bRes && bRes.value) setMonthlyBudgets(JSON.parse(bRes.value));
+        if (bRes && bRes.value) {
+          const { _notes, ...loadedBudgets } = JSON.parse(bRes.value);
+          setMonthlyBudgets(loadedBudgets);
+          setBudgetNotes(_notes || {});
+        }
       } catch (e) {}
       try {
         const aRes = await fetched.a;
@@ -933,9 +940,14 @@ function HouseholdBudget() {
     setRecurringItems(next);
     debouncedSave(RECURRING_KEY, next, "정기지출 목록 저장에 실패했어요.");
   }
-  function persistBudgets(next) {
+  function persistBudgets(next, nextNotes = budgetNotes) {
     setMonthlyBudgets(next);
-    debouncedSave(BUDGETS_KEY, next, "예산 설정 저장에 실패했어요.");
+    setBudgetNotes(nextNotes);
+    const hasNotes = Object.keys(nextNotes).length > 0;
+    debouncedSave(BUDGETS_KEY, hasNotes ? { ...next, _notes: nextNotes } : next, "예산 설정 저장에 실패했어요.");
+  }
+  function getBudgetNote(groupId, month) {
+    return budgetNotes[month]?.[groupId] || "";
   }
   function getGroupBudget(groupId, month) {
     const g = groups.find((x) => x.id === groupId);
@@ -1745,9 +1757,11 @@ function HouseholdBudget() {
           현재잔액: l.balance || 0,
           이자율: l.rate || 0,
           상환완료: l.completed ? "Y" : "N",
+          완료한달: l.completedMonth || "",
+          완료전잔액: l.preCompleteBalance ?? "",
         }));
         const loanWs = XLSX.utils.json_to_sheet(loanRows);
-        loanWs["!cols"] = [{ wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 8 }];
+        loanWs["!cols"] = [{ wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 12 }];
         XLSX.utils.book_append_sheet(wb, loanWs, "대출");
       }
 
@@ -1769,6 +1783,8 @@ function HouseholdBudget() {
       const assetRows = [];
       Object.entries(assetData.monthlySnapshots || {}).sort().forEach(([month, snap]) => {
         (snap.items || []).forEach((a) => assetRows.push({ 월: month, 자산이름: a.name, 금액: a.amount }));
+        // 자산·부채가 하나도 없는 달은 "일부러 비워둔 달"이라, 이름·금액이 빈 행으로 표시해둬요
+        if ((snap.items || []).length === 0 && (snap.liabilities || []).length === 0) assetRows.push({ 월: month, 자산이름: "", 금액: "" });
       });
       if (assetRows.length > 0) {
         const assetWs = XLSX.utils.json_to_sheet(assetRows);
@@ -1810,12 +1826,12 @@ function HouseholdBudget() {
       Object.entries(monthlyBudgets || {}).sort().forEach(([month, byGroup]) => {
         Object.entries(byGroup).forEach(([groupId, amount]) => {
           const group = groups.find((g) => g.id === groupId);
-          budgetRows.push({ 월: month, 그룹: group ? group.label : groupId, 예산금액: amount });
+          budgetRows.push({ 월: month, 그룹: group ? group.label : groupId, 예산금액: amount, 메모: budgetNotes[month]?.[groupId] || "" });
         });
       });
       if (budgetRows.length > 0) {
         const budgetWs = XLSX.utils.json_to_sheet(budgetRows);
-        budgetWs["!cols"] = [{ wch: 10 }, { wch: 14 }, { wch: 12 }];
+        budgetWs["!cols"] = [{ wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 30 }];
         XLSX.utils.book_append_sheet(wb, budgetWs, "예산");
       }
 
@@ -1827,6 +1843,7 @@ function HouseholdBudget() {
         { 항목: "환율통화", 값: settings.fxCurrency || "" },
         { 항목: "환율값", 값: settings.fxRate || 0 },
         { 항목: "대출목표일", 값: loanData.targetDate || "" },
+        { 항목: "지출비중기본그룹", 값: settings.defaultPieGroup || "" },
       ];
       const settingsWs = XLSX.utils.json_to_sheet(settingsRows);
       settingsWs["!cols"] = [{ wch: 14 }, { wch: 20 }];
@@ -1854,6 +1871,37 @@ function HouseholdBudget() {
       if (rawGroup.includes("생활비")) return cat; // 식비/문화/기타는 생활비 쪽엔 접두어 없이 그대로
     }
     return cat;
+  }
+
+  // 불러온 예산 행들을 주어진 그룹 목록(이름으로 찾아요)에 맞춰 합쳐 넣어요
+  function applyImportedBudgetRows(rows, groupList) {
+    const mergedBudgets = { ...monthlyBudgets };
+    const mergedNotes = { ...budgetNotes };
+    let count = 0;
+    rows.forEach((r) => {
+      const month = String(r["월"] || "").trim();
+      const groupLabelStr = String(r["그룹"] || "").trim();
+      const amount = Number(r["예산금액"]);
+      const group = groupList.find((g) => g.label === groupLabelStr);
+      if (!month || !group || isNaN(amount)) return;
+      mergedBudgets[month] = { ...(mergedBudgets[month] || {}), [group.id]: amount };
+      const memo = String(r["메모"] ?? "").trim();
+      if (memo) mergedNotes[month] = { ...(mergedNotes[month] || {}), [group.id]: memo };
+      count++;
+    });
+    if (count > 0) persistBudgets(mergedBudgets, mergedNotes);
+    return count;
+  }
+
+  // 카테고리 설정을 불러올지 고른 뒤 마무리해요. 예산은 고른 결과(새 그룹 / 지금 그룹)에 맞춰 넣어요.
+  function finishCategoryImport(apply) {
+    const pending = pendingCategoryImport;
+    if (!pending) return;
+    if (apply) persistCategoryConfig(pending.groups, pending.incomeGroups);
+    const n = applyImportedBudgetRows(pending.budgetRows || [], apply ? pending.groups : groups);
+    setPendingCategoryImport(null);
+    if (apply) setToast(n > 0 ? `카테고리 설정, 예산 ${n}건 불러왔어요` : "카테고리 설정을 불러왔어요");
+    else if (n > 0) setToast(`예산 ${n}건 불러왔어요`);
   }
 
   // "카테고리 설정" 시트 행들을 그룹 구조로 재구성해요. 그룹ID를 기준으로 묶고,
@@ -1923,7 +1971,7 @@ function HouseholdBudget() {
             memo: String(r["메모"] || "").trim(),
           };
         })
-        .filter((t) => t.date && t.category && t.amount > 0);
+        .filter((t) => t.date && t.category && t.amount !== 0);
 
       const existingKeys = new Set(transactions.map((t) => `${t.date}|${t.type}|${t.category}|${t.amount}|${t.memo}`));
       const newOnes = imported.filter((t) => !existingKeys.has(`${t.date}|${t.type}|${t.category}|${t.amount}|${t.memo}`));
@@ -1952,6 +2000,7 @@ function HouseholdBudget() {
       // 대출 + 대출월별기록 (같이 처리해야 이름→id 매칭이 가능해요)
       let loanAddedCount = 0;
       let loanHistAddedCount = 0;
+      let importedLoanData = null;
       const loanSheetName = wb.SheetNames.find((n) => n === "대출");
       const loanHistSheetName = wb.SheetNames.find((n) => n === "대출월별기록");
       if (loanSheetName || loanHistSheetName) {
@@ -1967,6 +2016,8 @@ function HouseholdBudget() {
               balance: Number(r["현재잔액"]) || 0,
               rate: Number(r["이자율"]) || 0,
               completed: String(r["상환완료"] || "").trim().toUpperCase() === "Y",
+              ...(String(r["완료한달"] || "").trim() ? { completedMonth: String(r["완료한달"]).trim() } : {}),
+              ...(r["완료전잔액"] !== "" && r["완료전잔액"] != null && !isNaN(Number(r["완료전잔액"])) ? { preCompleteBalance: Number(r["완료전잔액"]) } : {}),
             }))
             .filter((l) => l.name && !existingLoanNames.has(l.name));
           mergedLoans = [...mergedLoans, ...newLoans];
@@ -1992,11 +2043,13 @@ function HouseholdBudget() {
           const nextLoanData = { ...loanData, loans: mergedLoans, monthlySnapshots: mergedSnapshots };
           setLoanData(nextLoanData);
           debouncedSave(LOANS_KEY, nextLoanData, "대출 정보 저장에 실패했어요.");
+          importedLoanData = nextLoanData;
         }
       }
 
       // 자산 + 부채 (같이 처리해서 월별 스냅샷을 한 번에 합쳐요)
       let assetAddedCount = 0;
+      let assetMonthMarked = false;
       const assetSheetName = wb.SheetNames.find((n) => n === "자산");
       const liabSheetName = wb.SheetNames.find((n) => n === "부채");
       if (assetSheetName || liabSheetName) {
@@ -2011,6 +2064,8 @@ function HouseholdBudget() {
             const month = String(r["월"] || "").trim();
             const name = String(r["자산이름"] || "").trim();
             const amount = Number(r["금액"]);
+            // 이름·금액이 둘 다 빈 행은 "그 달을 일부러 비워뒀다"는 표시예요
+            if (month && !name && String(r["금액"]).trim() === "") { ensureMonth(month); assetMonthMarked = true; return; }
             if (!month || !name || isNaN(amount)) return;
             ensureMonth(month);
             const existing = mergedAssetSnapshots[month].items.find((a) => a.name === name);
@@ -2033,30 +2088,18 @@ function HouseholdBudget() {
             assetAddedCount++;
           });
         }
-        if (assetAddedCount > 0) {
+        if (assetAddedCount > 0 || assetMonthMarked) {
           const nextAssetData = { monthlySnapshots: mergedAssetSnapshots };
           setAssetData(nextAssetData);
           debouncedSave(ASSETS_KEY, nextAssetData, "자산 정보 저장에 실패했어요.");
         }
       }
 
-      // 예산
+      // 예산 — 카테고리 설정을 같이 불러올 땐, 그 결정이 난 뒤에 (새 그룹 기준으로) 넣어요
       let budgetAddedCount = 0;
+      let importedBudgetRows = [];
       const budgetSheetName = wb.SheetNames.find((n) => n === "예산");
-      if (budgetSheetName) {
-        const budgetRows = XLSX.utils.sheet_to_json(wb.Sheets[budgetSheetName], { defval: "" });
-        const mergedBudgets = { ...monthlyBudgets };
-        budgetRows.forEach((r) => {
-          const month = String(r["월"] || "").trim();
-          const groupLabelStr = String(r["그룹"] || "").trim();
-          const amount = Number(r["예산금액"]);
-          const group = groups.find((g) => g.label === groupLabelStr);
-          if (!month || !group || isNaN(amount)) return;
-          mergedBudgets[month] = { ...(mergedBudgets[month] || {}), [group.id]: amount };
-          budgetAddedCount++;
-        });
-        if (budgetAddedCount > 0) persistBudgets(mergedBudgets);
-      }
+      if (budgetSheetName) importedBudgetRows = XLSX.utils.sheet_to_json(wb.Sheets[budgetSheetName], { defval: "" });
 
       // 기본 설정
       let settingsRestored = false;
@@ -2071,9 +2114,13 @@ function HouseholdBudget() {
         if (settingsMap["대출상환모드"]) nextSettings.loanModeEnabled = String(settingsMap["대출상환모드"]).trim().toUpperCase() !== "OFF";
         if (settingsMap["환율통화"]) nextSettings.fxCurrency = String(settingsMap["환율통화"]);
         if (settingsMap["환율값"] != null && settingsMap["환율값"] !== "") nextSettings.fxRate = Number(settingsMap["환율값"]) || 0;
+        if (settingsMap["지출비중기본그룹"]) nextSettings.defaultPieGroup = String(settingsMap["지출비중기본그룹"]);
         persistSettings(nextSettings);
         if (settingsMap["대출목표일"]) {
-          persistLoans({ ...loanData, targetDate: String(settingsMap["대출목표일"]) });
+          // 방금 불러온 대출·기록이 있으면 그 위에 목표일을 얹어요 (예전 상태로 덮어쓰면 불러온 대출이 사라져요)
+          const nextLoanData = { ...(importedLoanData || loanData), targetDate: String(settingsMap["대출목표일"]) };
+          setLoanData(nextLoanData);
+          debouncedSave(LOANS_KEY, nextLoanData, "대출 정보 저장에 실패했어요.");
         }
         settingsRestored = true;
       }
@@ -2086,10 +2133,11 @@ function HouseholdBudget() {
         const categoryRows = XLSX.utils.sheet_to_json(wb.Sheets[categorySheetName], { defval: "" });
         const parsedCategories = parseImportedCategoryGroups(categoryRows);
         if (parsedCategories.groups.length > 0 || parsedCategories.incomeGroups.length > 0) {
-          setPendingCategoryImport(parsedCategories);
+          setPendingCategoryImport({ ...parsedCategories, budgetRows: importedBudgetRows });
           categoryImportAvailable = true;
         }
       }
+      if (!categoryImportAvailable && importedBudgetRows.length > 0) budgetAddedCount = applyImportedBudgetRows(importedBudgetRows, groups);
 
       const summaryParts = [];
       if (newOnes.length > 0) summaryParts.push(`거래 ${newOnes.length}건`);
@@ -3467,7 +3515,12 @@ function HouseholdBudget() {
                       />
                       <button
                         onClick={() => {
-                          persistBudgets({ ...monthlyBudgets, [selectedMonth]: { ...(monthlyBudgets[selectedMonth] || {}), [g.id]: Number(budgetDraft) || 0 } });
+                          const memo = budgetMemoDraft.trim();
+                          const monthNotes = { ...(budgetNotes[selectedMonth] || {}) };
+                          if (memo) monthNotes[g.id] = memo; else delete monthNotes[g.id];
+                          const nextNotes = { ...budgetNotes, [selectedMonth]: monthNotes };
+                          if (Object.keys(monthNotes).length === 0) delete nextNotes[selectedMonth];
+                          persistBudgets({ ...monthlyBudgets, [selectedMonth]: { ...(monthlyBudgets[selectedMonth] || {}), [g.id]: Number(budgetDraft) || 0 } }, nextNotes);
                           setEditingBudgetGroupId(null);
                           setToast(`${g.label} ${selectedMonth}월 예산을 저장했어요`);
                         }}
@@ -3480,7 +3533,7 @@ function HouseholdBudget() {
                   ) : (
                     budgetEditMode && (
                       <button
-                        onClick={() => { setEditingBudgetGroupId(g.id); setBudgetDraft(String(getGroupBudget(g.id, selectedMonth))); }}
+                        onClick={() => { setEditingBudgetGroupId(g.id); setBudgetDraft(String(getGroupBudget(g.id, selectedMonth))); setBudgetMemoDraft(getBudgetNote(g.id, selectedMonth)); }}
                         className="text-[11px] text-slate-400 hover:text-slate-600"
                       >
                         이 달 예산 수정
@@ -3488,6 +3541,16 @@ function HouseholdBudget() {
                     )
                   )}
                 </div>
+                {editingBudgetGroupId === g.id && (
+                  <input
+                    type="text"
+                    value={budgetMemoDraft}
+                    onChange={(e) => setBudgetMemoDraft(e.target.value)}
+                    maxLength={100}
+                    placeholder="메모 (예: 여행 때문에 증액, 경조사로 증액)"
+                    className="w-full h-8 border border-slate-200 rounded-lg px-2 text-xs mb-1.5"
+                  />
+                )}
                 <ProgressBar label="" spent={spent} budget={getGroupBudget(g.id, selectedMonth)} />
                 {(() => {
                   const remain = getGroupBudget(g.id, selectedMonth) - spent;
@@ -3500,6 +3563,9 @@ function HouseholdBudget() {
                     </div>
                   );
                 })()}
+                {editingBudgetGroupId !== g.id && getBudgetNote(g.id, selectedMonth) && (
+                  <p className="text-[11px] text-slate-400 mt-1 break-words">📝 {getBudgetNote(g.id, selectedMonth)}</p>
+                )}
               </div>
             );
           })
@@ -4599,7 +4665,7 @@ function HouseholdBudget() {
 
       {pendingCategoryImport && (
         <>
-          <div className="fixed inset-0 bg-black/40 z-50" onClick={() => setPendingCategoryImport(null)} />
+          <div className="fixed inset-0 bg-black/40 z-50" onClick={() => finishCategoryImport(false)} />
           <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl p-5 shadow-lg max-w-sm mx-auto">
             <h3 className="text-sm font-semibold text-slate-800 text-center mb-1">카테고리 설정도 불러올까요?</h3>
             <p className="text-xs text-slate-500 text-center mb-3">백업 파일에 카테고리 그룹 설정이 들어있어요.</p>
@@ -4607,15 +4673,11 @@ function HouseholdBudget() {
               ⚠️ 불러오면 지금 쓰고 있는 카테고리 설정(그룹, 이름, 순서, 예산)이 전부 이 백업 파일 내용으로 교체돼요. 지금 직접 만들거나 수정한 카테고리가 있다면 사라져요. 이미 기록된 거래 내역 자체는 영향받지 않아요.
             </p>
             <div className="flex gap-2">
-              <button onClick={() => setPendingCategoryImport(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
+              <button onClick={() => finishCategoryImport(false)} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600">
                 아니요, 그대로 둘게요
               </button>
               <button
-                onClick={() => {
-                  persistCategoryConfig(pendingCategoryImport.groups, pendingCategoryImport.incomeGroups);
-                  setPendingCategoryImport(null);
-                  setToast("카테고리 설정을 불러왔어요");
-                }}
+                onClick={() => finishCategoryImport(true)}
                 className="flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-medium"
               >
                 예, 덮어쓸게요
